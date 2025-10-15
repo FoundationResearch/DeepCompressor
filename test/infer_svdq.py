@@ -46,8 +46,14 @@ def infer_svdq(ckpt_path: str = "./ckpt/mlp_demo_svdq.pt", device: str = "cuda",
     x = torch.randn(num_test_samples, config["in_features"], dtype=torch.bfloat16, device=device)
     # ground truth: sum of inputs
     y = torch.sum(x, dim=1, keepdim=True)
-
-    pred = qmodel(x)
+    print(x.shape)
+    # SVDQ linear expects (B, S, C). If x is 2D (N, C), promote to (1, N, C) and squeeze back.
+    if x.ndim == 2:
+        x3 = x.unsqueeze(0)
+        pred3 = qmodel(x3)
+        pred = pred3.squeeze(0)
+    else:
+        pred = qmodel(x)
     loss = nn.MSELoss()(pred, y)
     print(f"[nunchaku infer] loss={loss.item():.6f}")
     for i in range(min(5, num_test_samples)):
