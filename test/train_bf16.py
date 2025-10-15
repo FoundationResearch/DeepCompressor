@@ -8,7 +8,7 @@ from model import TwoLayerMLP
 def train_and_save(
     in_features: int = 128,
     hidden_features: int = 128,
-    out_features: int = 16,
+    out_features: int = 128,
     num_samples: int = 4096,
     num_steps: int = 400,
     learning_rate: float = 1e-2,
