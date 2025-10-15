@@ -30,7 +30,7 @@ def build_quantized_model(config: dict, state_dict: dict, metadata: dict, device
 
     replace(model)
     model.load_state_dict(state_dict)
-    model = model.to(device).to(torch.bfloat16).eval()
+    model = model.to(device).eval()
     return model
 
 
