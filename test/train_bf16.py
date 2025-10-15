@@ -8,7 +8,7 @@ from model import TwoLayerMLP
 def train_and_save(
     in_features: int = 128,
     hidden_features: int = 128,
-    out_features: int = 1,
+    out_features: int = 16,
     num_samples: int = 4096,
     num_steps: int = 400,
     learning_rate: float = 1e-2,
@@ -19,9 +19,13 @@ def train_and_save(
 ) -> str:
     torch.manual_seed(weight_seed)
 
-    # Dataset: x ~ N(0, I), y = sum(x) (summation of inputs)
+    # Dataset: x ~ N(0, I)
     x_train = torch.randn(num_samples, in_features, dtype=torch.bfloat16, device=device)
-    y_train = torch.sum(x_train, dim=1, keepdim=True)  # Sum along feature dimension
+    # Targets: y[:,0]=sum(x); y[:,1]=-sum(x); others zeros
+    s = torch.sum(x_train, dim=1, keepdim=True)
+    y_train = torch.zeros(num_samples, out_features, dtype=torch.bfloat16, device=device)
+    y_train[:, 0:1] = s
+    y_train[:, 1:2] = -s
 
     model = TwoLayerMLP(in_features, hidden_features, out_features).to(device).to(torch.bfloat16)
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)

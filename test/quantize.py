@@ -71,9 +71,19 @@ def convert_linear_to_svdq(
     torch_dtype = torch.bfloat16 if linear.weight.dtype == torch.bfloat16 else torch.float16
     device = linear.weight.device
 
-    # 1) Low-rank branch via truncated SVD
-    r = min(rank, in_features, out_features)
-    lora_down, lora_up, recon = truncated_svd_lowrank(linear.weight.data, rank=r)
+    # 1) Low-rank branch via truncated SVD; align rank to multiples of 16 for kernel
+    r_base = min(rank, in_features, out_features)
+    def _align16(x: int) -> int:
+        return ((max(1, x) + 15) // 16) * 16
+    r_aligned = _align16(r_base)
+    lora_down_b, lora_up_b, recon = truncated_svd_lowrank(linear.weight.data, rank=r_base)
+    if r_aligned != r_base:
+        lora_down = torch.zeros(in_features, r_aligned, dtype=lora_down_b.dtype, device=lora_down_b.device)
+        lora_up = torch.zeros(out_features, r_aligned, dtype=lora_up_b.dtype, device=lora_up_b.device)
+        lora_down[:, :r_base] = lora_down_b
+        lora_up[:, :r_base] = lora_up_b
+    else:
+        lora_down, lora_up = lora_down_b, lora_up_b
 
     # 2) Symmetric INT4 quantization on residual, grouped by K every 64
     residual = (linear.weight.data - recon).contiguous()
@@ -84,7 +94,7 @@ def convert_linear_to_svdq(
     # 3) Build SVDQ layer and fill parameters
     svdq = SVDQW4A4Linear.from_linear(
         linear,
-        rank=r,
+        rank=r_aligned,
         precision=precision,
         act_unsigned=act_unsigned,
     )

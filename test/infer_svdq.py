@@ -44,8 +44,11 @@ def infer_svdq(ckpt_path: str = "./ckpt/mlp_demo_svdq.pt", device: str = "cuda",
 
     torch.manual_seed(42)
     x = torch.randn(num_test_samples, config["in_features"], dtype=torch.bfloat16, device=device)
-    # ground truth: sum of inputs
-    y = torch.sum(x, dim=1, keepdim=True)
+    # ground truth: 16-d; [sum(x), -sum(x), 0, ..., 0]
+    s = torch.sum(x, dim=1, keepdim=True)
+    y = torch.zeros(num_test_samples, config["out_features"], dtype=torch.bfloat16, device=device)
+    y[:, 0:1] = s
+    y[:, 1:2] = -s
     print(x.shape)
     # SVDQ linear expects (B, S, C). If x is 2D (N, C), promote to (1, N, C) and squeeze back.
     if x.ndim == 2:
@@ -56,8 +59,9 @@ def infer_svdq(ckpt_path: str = "./ckpt/mlp_demo_svdq.pt", device: str = "cuda",
         pred = qmodel(x)
     loss = nn.MSELoss()(pred, y)
     print(f"[nunchaku infer] loss={loss.item():.6f}")
+    print("Sample [y0, y1] vs GT [sum, -sum]:")
     for i in range(min(5, num_test_samples)):
-        print(f"  Input sum: {y[i].item():.4f}, Predicted: {pred[i].item():.4f}")
+        print(f"  GT: [{y[i,0].item():.4f}, {y[i,1].item():.4f}] | Pred: [{pred[i,0].item():.4f}, {pred[i,1].item():.4f}]")
     return pred, y, loss
 
 

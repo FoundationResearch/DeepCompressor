@@ -16,18 +16,21 @@ def infer(ckpt_path="./ckpt/mlp_demo.pt", device="cuda", num_test_samples=1024):
     torch.manual_seed(42)
     x_test = torch.randn(num_test_samples, config["in_features"], dtype=torch.bfloat16, device=device)
     
-    # Ground truth: summation of inputs
-    y_test = torch.sum(x_test, dim=1, keepdim=True)
+    # Ground truth: 16-d; [sum(x), -sum(x), 0, ..., 0]
+    s = torch.sum(x_test, dim=1, keepdim=True)
+    y_test = torch.zeros(num_test_samples, config["out_features"], dtype=torch.bfloat16, device=device)
+    y_test[:, 0:1] = s
+    y_test[:, 1:2] = -s
     
     # Inference
     with torch.no_grad():
         pred = model(x_test)
         loss = nn.MSELoss()(pred, y_test)
     
-    print(f"Inference loss: {loss.item():.6f}")
-    print(f"Sample predictions vs ground truth:")
+    print(f"Inference loss (BF16): {loss.item():.6f}")
+    print("Sample [y0, y1] vs GT [sum, -sum]:")
     for i in range(min(5, num_test_samples)):
-        print(f"  Input sum: {y_test[i].item():.4f}, Predicted: {pred[i].item():.4f}")
+        print(f"  GT: [{y_test[i,0].item():.4f}, {y_test[i,1].item():.4f}] | Pred: [{pred[i,0].item():.4f}, {pred[i,1].item():.4f}]")
     
     return pred, y_test, loss
 
