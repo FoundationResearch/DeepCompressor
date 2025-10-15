@@ -81,12 +81,17 @@ def pack_with_nunchaku_layout(q_int4: torch.Tensor, scales: torch.Tensor, group_
     assert q_int4.dtype == torch.int8
     N, K = q_int4.shape
     assert K % group_size == 0 and scales.shape == (K // group_size, N)
-    # Nunchaku packer expects int32 tensor; it will validate MMA tile divisibility
+    ng = K // group_size
+    # Nunchaku packer expects (n=out_features, 1, ng, 1) for scales before padding/packing
+    scales_4d = scales.t().reshape(N, 1, ng, 1)
     packer = NunchakuWeightPacker(bits=4)
-    # No padding needed for (N, K) = (out_features, in_features) when divisible by tiles; else packer raises
+    # Ensure weight tile alignment if needed
     q_i32 = q_int4.to(torch.int32)
+    # For robustness, pad to required tiles before packing
+    q_i32 = packer.pad_weight(q_i32)
     qweight_packed = packer.pack_weight(q_i32)
-    wscales_packed = packer.pack_scale(scales, group_size=group_size)
+    scales_4d = packer.pad_scale(scales_4d.to(dtype=scales.dtype), group_size=group_size)
+    wscales_packed = packer.pack_scale(scales_4d, group_size=group_size)
     # Final dtypes/shapes: int8 and bf16/fp16, (N, K//2) and (K//group_size, N)
     return qweight_packed.to(torch.int8), wscales_packed
 
@@ -160,6 +165,22 @@ def convert_linear_to_svdq(
     else:
         svdq.smooth_factor.fill_(1)
         svdq.smooth_factor_orig.fill_(1)
+
+    # 5) Debug: reconstruct W_hat from (q, scales) + low-rank and report error
+    try:
+        N, K = residual.shape
+        gs = 64
+        G = K // gs
+        s_rep = wscales.transpose(0, 1).repeat_interleave(gs, dim=1).to(residual.dtype)  # (N, K)
+        W_hat_recon = (q.to(residual.dtype) * s_rep)
+        if r_aligned > 0:
+            W_hat_recon = W_hat_recon + (lora_up @ lora_down.t()).to(residual.dtype)
+        err = torch.mean((W_hat_recon - W_hat).float().pow(2))
+        ref = torch.mean(W_hat.float().pow(2)) + 1e-12
+        rel = (err / ref).item()
+        print(f"[quantize][debug] layer recon rel-MSE={rel:.6e}")
+    except Exception as _:
+        pass
     
     # if DEBUG_PRINT:
     #     # print original weight shape and svdq packed weight shape
