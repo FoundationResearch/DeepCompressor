@@ -6,6 +6,7 @@ import time
 
 from model import TwoLayerMLP
 from nunchaku.models.linear import SVDQW4A4Linear
+from deepcompressor.backend.nunchaku.utils import NunchakuWeightPacker
 
 DEBUG_PRINT = True
 
@@ -58,13 +59,29 @@ def quantize_residual_to_int4(residual: torch.Tensor, scales: torch.Tensor, grou
 
 
 @torch.no_grad()
-def pack_int4_k_major(q: torch.Tensor) -> torch.Tensor:
-    # q: (N, K) int8 in [-8,7]; pack along K: 2 int4 -> 1 int8
-    assert q.dtype == torch.int8 and q.shape[1] % 2 == 0
-    lo = (q[:, 0::2] & 0xF).to(torch.uint8)
-    hi = (q[:, 1::2] & 0xF).to(torch.uint8)
-    packed = (lo | (hi << 4)).to(torch.int8)
-    return packed  # (N, K//2)
+def pack_with_nunchaku_layout(q_int4: torch.Tensor, scales: torch.Tensor, group_size: int = 64) -> tuple[torch.Tensor, torch.Tensor]:
+    """Pack weights and scales to Nunchaku MMA layout.
+
+    Args:
+        q_int4: (N, K) int8 in [-8, 7]
+        scales: (K//group_size, N) bf16/fp16
+        group_size: int, default 64 for INT4
+
+    Returns:
+        qweight_packed: (N, K//2) int8 but arranged in Nunchaku layout
+        wscales_packed: (K//group_size, N) same dtype as input, arranged for kernel access
+    """
+    assert q_int4.dtype == torch.int8
+    N, K = q_int4.shape
+    assert K % group_size == 0 and scales.shape == (K // group_size, N)
+    # Nunchaku packer expects int32 tensor; it will validate MMA tile divisibility
+    packer = NunchakuWeightPacker(bits=4)
+    # No padding needed for (N, K) = (out_features, in_features) when divisible by tiles; else packer raises
+    q_i32 = q_int4.to(torch.int32)
+    qweight_packed = packer.pack_weight(q_i32)
+    wscales_packed = packer.pack_scale(scales, group_size=group_size)
+    # Final dtypes/shapes: int8 and bf16/fp16, (N, K//2) and (K//group_size, N)
+    return qweight_packed.to(torch.int8), wscales_packed
 
 
 @torch.no_grad()
@@ -85,12 +102,19 @@ def convert_linear_to_svdq(
     torch_dtype = torch.bfloat16 if linear.weight.dtype == torch.bfloat16 else torch.float16
     device = linear.weight.device
 
-    # 1) Low-rank branch via truncated SVD; align rank to multiples of 16 for kernel
+    # 1) Apply SmoothQuant to weights (migrate outliers): W_hat = W / s
+    if smooth_factor is not None:
+        s = smooth_factor.view(1, in_features).to(linear.weight.device, dtype=linear.weight.dtype)
+    else:
+        s = torch.ones(1, in_features, device=linear.weight.device, dtype=linear.weight.dtype)
+    W_hat = (linear.weight.data / s).contiguous()
+
+    # 2) Low-rank branch via truncated SVD on W_hat; align rank to multiples of 16 for kernel
     r_base = min(rank, in_features, out_features)
     def _align16(x: int) -> int:
         return ((max(1, x) + 15) // 16) * 16
     r_aligned = _align16(r_base)
-    lora_down_b, lora_up_b, recon = truncated_svd_lowrank(linear.weight.data, rank=r_base)
+    lora_down_b, lora_up_b, recon = truncated_svd_lowrank(W_hat, rank=r_base)
     if r_aligned != r_base:
         lora_down = torch.zeros(in_features, r_aligned, dtype=lora_down_b.dtype, device=lora_down_b.device)
         lora_up = torch.zeros(out_features, r_aligned, dtype=lora_up_b.dtype, device=lora_up_b.device)
@@ -99,8 +123,8 @@ def convert_linear_to_svdq(
     else:
         lora_down, lora_up = lora_down_b, lora_up_b
 
-    # 2) Symmetric INT4 quantization on residual, grouped by K every 64 (percentile-based)
-    residual = (linear.weight.data - recon).contiguous()
+    # 3) Symmetric INT4 quantization on residual of W_hat, grouped by K every 64 (percentile-based)
+    residual = (W_hat - recon).contiguous()
     wscales = compute_group_scales_sym_int4(
         residual,
         group_size=64,
@@ -108,9 +132,9 @@ def convert_linear_to_svdq(
         percentile=w_percentile,
     )  # (K//64, N)
     q = quantize_residual_to_int4(residual, wscales, group_size=64)                      # (N, K)
-    qweight = pack_int4_k_major(q)                                                       # (N, K//2)
+    qweight, wscales_packed = pack_with_nunchaku_layout(q, wscales, group_size=64)
 
-    # 3) Build SVDQ layer and fill parameters
+    # 4) Build SVDQ layer and fill parameters
     svdq = SVDQW4A4Linear.from_linear(
         linear,
         rank=r_aligned,
@@ -118,7 +142,7 @@ def convert_linear_to_svdq(
         act_unsigned=act_unsigned,
     )
     svdq.qweight.copy_(qweight)
-    svdq.wscales.copy_(wscales)
+    svdq.wscales.copy_(wscales_packed)
     svdq.proj_down.copy_(lora_down.to(torch_dtype))
     svdq.proj_up.copy_(lora_up.to(torch_dtype))
     if linear.bias is not None:
