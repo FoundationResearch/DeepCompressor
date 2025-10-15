@@ -1,4 +1,5 @@
 import os
+import sys
 import math
 import torch
 import torch.nn as nn
@@ -6,6 +7,12 @@ import time
 
 from model import TwoLayerMLP
 from nunchaku.models.linear import SVDQW4A4Linear
+
+# add repository root to sys.path so local 'deepcompressor' can be imported
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
+
 from deepcompressor.backend.nunchaku.utils import NunchakuWeightPacker
 
 DEBUG_PRINT = True
