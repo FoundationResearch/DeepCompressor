@@ -7,7 +7,7 @@ from model import TwoLayerMLP
 
 def build_quantized_model(config: dict, state_dict: dict, metadata: dict, device: str | torch.device = "cuda") -> nn.Module:
     # Reconstruct architecture and replace Linear with SVDQ using ranks inferred from state_dict/metadata
-    model = TwoLayerMLP(**config)
+    model = TwoLayerMLP(**config).to(device).to(torch.bfloat16)
 
     precision = metadata.get("precision", "int4")
 
@@ -23,7 +23,12 @@ def build_quantized_model(config: dict, state_dict: dict, metadata: dict, device
             if isinstance(child, nn.Linear):
                 rank = get_rank_for(name)
                 act_unsigned = name != "layer1"  # after ReLU
-                svdq = SVDQW4A4Linear.from_linear(child, rank=rank, precision=precision, act_unsigned=act_unsigned)
+                svdq = SVDQW4A4Linear.from_linear(
+                    child,
+                    rank=rank,
+                    precision=precision,
+                    act_unsigned=act_unsigned
+                )
                 setattr(module, name, svdq)
             else:
                 replace(child)
