@@ -151,18 +151,50 @@ def quantize_and_save(
     # Replace nn.Linear with SVDQW4A4Linear
     qmodel = replace_module_linear_with_svdq(model, ranks={"layer1": 16, "layer2": 16}).to(device).eval()
 
-    os.makedirs(os.path.dirname(ckpt_out) or ".", exist_ok=True)
-    torch.save(
-        {
-            "config": cfg,
-            "svdq": True,
-            "precision": "int4",
-            "rank": {"layer1": 16, "layer2": 16},
-            "state_dict": qmodel.state_dict(),
-        },
-        ckpt_out,
-    )
-    print(f"[quantize] SVDQ W4A4 checkpoint saved to {ckpt_out}")
+    # Optional: save to disk
+    if ckpt_out:
+        os.makedirs(os.path.dirname(ckpt_out) or ".", exist_ok=True)
+        torch.save(
+            {
+                "config": cfg,
+                "svdq": True,
+                "precision": "int4",
+                "rank": {"layer1": 16, "layer2": 16},
+                "state_dict": qmodel.state_dict(),
+            },
+            ckpt_out,
+        )
+        print(f"[quantize] SVDQ W4A4 checkpoint saved to {ckpt_out}")
+
+    # Direct inference without saving/loading
+    torch.manual_seed(42)
+    x = torch.randn(1024, cfg["in_features"], dtype=torch.bfloat16, device=device)
+    # Ground truth: sum along features if out_features==1; otherwise first head tracks sum, second head = -sum
+    if cfg.get("out_features", 1) == 1:
+        y = torch.sum(x, dim=1, keepdim=True)
+    else:
+        s = torch.sum(x, dim=1, keepdim=True)
+        y = torch.zeros(x.shape[0], cfg["out_features"], dtype=torch.bfloat16, device=device)
+        y[:, 0:1] = s
+        if cfg["out_features"] > 1:
+            y[:, 1:2] = -s
+
+    # SVDQ linear expects (B, S, C) — if 2D, lift to (1, N, C)
+    squeeze_back = False
+    if x.ndim == 2:
+        x = x.unsqueeze(0)
+        squeeze_back = True
+    with torch.inference_mode():
+        pred = qmodel(x)
+        if squeeze_back:
+            pred = pred.squeeze(0)
+    loss = nn.MSELoss()(pred, y)
+    print(f"[quantize][direct infer] loss={loss.item():.6f}")
+    for i in range(min(5, x.shape[0] if not squeeze_back else pred.shape[0])):
+        if cfg.get("out_features", 1) == 1:
+            print(f"  GT sum={y[i].item():.4f} | Pred={pred[i].item():.4f}")
+        else:
+            print(f"  GT: [{y[i,0].item():.4f}, {y[i,1].item():.4f}] | Pred: [{pred[i,0].item():.4f}, {pred[i,1].item():.4f}]")
     return ckpt_out
 
 
