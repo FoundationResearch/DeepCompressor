@@ -2,6 +2,7 @@ import os
 import math
 import torch
 import torch.nn as nn
+import time
 
 from model import TwoLayerMLP
 from nunchaku.models.linear import SVDQW4A4Linear
@@ -129,14 +130,14 @@ def convert_linear_to_svdq(
         svdq.smooth_factor.fill_(1)
         svdq.smooth_factor_orig.fill_(1)
     
-    if DEBUG_PRINT:
-        # print original weight shape and svdq packed weight shape
-        print(f"original weight shape: {linear.weight.shape}")
-        print(f"svdq weight shape: {svdq.qweight.shape}")  # (N, K//2) packed int4
-        print(f"wscales shape: {svdq.wscales.shape}")      # (K//64, N)
-        # print project up and down shape
-        print(f"project up shape: {svdq.proj_up.shape}")
-        print(f"project down shape: {svdq.proj_down.shape}")
+    # if DEBUG_PRINT:
+    #     # print original weight shape and svdq packed weight shape
+    #     print(f"original weight shape: {linear.weight.shape}")
+    #     print(f"svdq weight shape: {svdq.qweight.shape}")  # (N, K//2) packed int4
+    #     print(f"wscales shape: {svdq.wscales.shape}")      # (K//64, N)
+    #     # print project up and down shape
+    #     print(f"project up shape: {svdq.proj_up.shape}")
+    #     print(f"project down shape: {svdq.proj_down.shape}")
     
     return svdq
 
@@ -255,11 +256,14 @@ def quantize_and_save(
     ckpt_out: str = "./ckpt/mlp_demo_svdq.pt",
     device: str | torch.device = "cuda",
 ):
+    t0 = time.time()
+    print("[quantize] === Start ===")
     # Load BF16 model checkpoint
     ckpt = torch.load(ckpt_in, map_location=device)
     cfg = ckpt["config"]
 
     # Build FP16/BF16 model and load weights
+    print("[quantize] Build BF16 model & load weights")
     model = TwoLayerMLP(**cfg).to(device).to(torch.bfloat16)
     model.load_state_dict(ckpt["state_dict"])  # trained bf16 weights
     model.eval()
@@ -269,19 +273,27 @@ def quantize_and_save(
     calib_bs = 2048
     x_calib = torch.randn(calib_bs, cfg["in_features"], dtype=torch.bfloat16, device=device)
     # baseline outputs for objective
+    t_ref = time.time()
     with torch.inference_mode():
         y_ref = model(x_calib)
+    print(f"[quantize] Baseline forward done in {(time.time()-t_ref):.3f}s, shape={tuple(y_ref.shape)}")
 
     # SmoothQuant factors (alpha=0.5, clamp 2^[-2,2])
+    t_sm = time.time()
+    print("[quantize] Compute SmoothQuant factors (alpha=0.5, clamp=2^[-2,2])")
     smooth_map = compute_smooth_factors(model, x_calib, alpha=0.5, clamp_exp=2.0)
+    print(f"[quantize] SmoothQuant done in {(time.time()-t_sm):.3f}s")
 
     # Small grid over weight percentile
     candidate_ps = [0.999, 1.0]
     best_p, best_loss, best_state = None, float("inf"), None
     ranks_cfg = {"layer1": 32, "layer2": 32}
+    print(f"[quantize] Percentile search over {candidate_ps}")
     for p in candidate_ps:
+        t_p = time.time()
         cand = TwoLayerMLP(**cfg).to(device).to(torch.bfloat16)
-        cand.load_state_dict(ckpt["state_dict"]).eval()
+        cand.load_state_dict(ckpt["state_dict"])
+        cand.eval()
         cand = replace_module_linear_with_svdq(
             cand, ranks=ranks_cfg, w_percentile=p, smooth_map=smooth_map
         ).to(device).eval()
@@ -290,14 +302,14 @@ def quantize_and_save(
             if x_calib.ndim == 2:
                 y_q = y_q.squeeze(0)
         loss = torch.mean((y_q - y_ref).float().pow(2)).item()
-        if DEBUG_PRINT:
-            print(f"[calib] percentile={p} MSE={loss:.6f}")
+        print(f"[quantize][search] p={p} MSE={loss:.6f} time={(time.time()-t_p):.3f}s")
         if loss < best_loss:
             best_loss = loss
             best_p = p
             best_state = cand.state_dict()
 
     # Build final quantized model with best hyperparams
+    print(f"[quantize] Build final quantized model (p={best_p})")
     qmodel = TwoLayerMLP(**cfg).to(device).to(torch.bfloat16)
     qmodel = replace_module_linear_with_svdq(qmodel, ranks=ranks_cfg, w_percentile=best_p, smooth_map=smooth_map)
     if best_state is not None:
@@ -305,6 +317,7 @@ def quantize_and_save(
 
     # Optional: save to disk
     if ckpt_out:
+        t_sv = time.time()
         os.makedirs(os.path.dirname(ckpt_out) or ".", exist_ok=True)
         torch.save(
             {
@@ -319,7 +332,7 @@ def quantize_and_save(
             },
             ckpt_out,
         )
-        print(f"[quantize] SVDQ W4A4 checkpoint saved to {ckpt_out}")
+        print(f"[quantize] Saved checkpoint to {ckpt_out} in {(time.time()-t_sv):.3f}s")
 
     # Direct inference without saving/loading
     torch.manual_seed(42)
@@ -339,6 +352,7 @@ def quantize_and_save(
     if x.ndim == 2:
         x = x.unsqueeze(0)
         squeeze_back = True
+    t_inf = time.time()
     with torch.inference_mode():
         pred = qmodel(x.unsqueeze(0)) if x.ndim == 2 else qmodel(x)
         if x.ndim == 2:
@@ -346,12 +360,13 @@ def quantize_and_save(
         if squeeze_back:
             pred = pred.squeeze(0)
     loss = nn.MSELoss()(pred, y)
-    print(f"[quantize][direct infer] loss={loss.item():.6f}")
+    print(f"[quantize] Direct-infer loss={loss.item():.6f} in {(time.time()-t_inf):.3f}s")
     for i in range(min(5, x.shape[0] if not squeeze_back else pred.shape[0])):
         if cfg.get("out_features", 1) == 1:
             print(f"  GT sum={y[i].item():.4f} | Pred={pred[i].item():.4f}")
         else:
             print(f"  GT: [{y[i,0].item():.4f}, {y[i,1].item():.4f}] | Pred: [{pred[i,0].item():.4f}, {pred[i,1].item():.4f}]")
+    print(f"[quantize] === Done in {(time.time()-t0):.3f}s ===")
     return ckpt_out
 
 
