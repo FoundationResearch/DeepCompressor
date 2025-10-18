@@ -365,7 +365,7 @@ def quantize_and_save(
     print(f"[quantize] SmoothQuant done in {(time.time()-t_sm):.3f}s")
 
     # Small grid over weight percentile
-    candidate_ps = [0.999, 1.0]
+    candidate_ps = [0.999]
     best_p, best_loss, best_state = None, float("inf"), None
     ranks_cfg = {"layer1": 128, "layer2": 128}
     print(f"[quantize] Percentile search over {candidate_ps}")
