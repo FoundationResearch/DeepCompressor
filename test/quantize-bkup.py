@@ -189,13 +189,12 @@ def convert_linear_to_svdq(
         svdq.proj_down.copy_(lora_packed[0])
         svdq.proj_up.copy_(lora_packed[1])
     
-    # low-rank original, because lora_packed's proj_down have padded weight, which cause misalignment.
     # svdq.proj_down.copy_(lora_down.to(torch_dtype))
     # svdq.proj_up.copy_(lora_up.to(torch_dtype))
     
     # packed bias and smooth
-    svdq.bias.copy_(linear.bias)
-    svdq.smooth_factor.copy_(smooth_factor)
+    svdq.bias.copy_(bias_packed)
+    svdq.smooth_factor.copy_(smooth_packed)
     svdq.smooth_factor_orig.copy_(smooth_factor)
 
     # 5) Debug: reconstruct W_hat from (q, scales) + low-rank and report error
