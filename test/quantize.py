@@ -185,13 +185,13 @@ def convert_linear_to_svdq(
     svdq.qweight.copy_(qweight)
     svdq.wscales.copy_(wscales_packed)
     # low-rank packed
-    # if lora_packed is not None:
-    #     svdq.proj_down.copy_(lora_packed[0])
-    #     svdq.proj_up.copy_(lora_packed[1])
+    if lora_packed is not None:
+        svdq.proj_down.copy_(lora_packed[0].transpose(0, 1).contiguous())
+        svdq.proj_up.copy_(lora_packed[1])
     
     # low-rank original, because lora_packed's proj_down have padded weight, which cause misalignment.
-    svdq.proj_down.copy_(lora_down.to(torch_dtype))
-    svdq.proj_up.copy_(lora_up.to(torch_dtype))
+    # svdq.proj_down.copy_(lora_down.to(torch_dtype))
+    # svdq.proj_up.copy_(lora_up.to(torch_dtype))
     
     # packed bias and smooth
     svdq.bias.copy_(bias_packed.view(-1))
@@ -366,7 +366,7 @@ def quantize_and_save(
     # Small grid over weight percentile
     candidate_ps = [0.999, 1.0]
     best_p, best_loss, best_state = None, float("inf"), None
-    ranks_cfg = {"layer1": 32, "layer2": 32}
+    ranks_cfg = {"layer1": 128, "layer2": 128}
     print(f"[quantize] Percentile search over {candidate_ps}")
     for p in candidate_ps:
         t_p = time.time()
