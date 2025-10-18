@@ -381,6 +381,7 @@ def quantize_and_save(
     # Small grid over weight percentile
     candidate_ps = [0.999]
     best_p, best_loss, best_state = None, float("inf"), None
+    best_model = None
     ranks_cfg = {"layer1": 128, "layer2": 128}
     print(f"[quantize] Percentile search over {candidate_ps}")
     for p in candidate_ps:
@@ -437,13 +438,12 @@ def quantize_and_save(
             best_loss = loss
             best_p = p
             best_state = cand.state_dict()
+            best_model = cand
 
     # Build final quantized model with best hyperparams
     print(f"[quantize] Build final quantized model (p={best_p})")
-    qmodel = TwoLayerMLP(**cfg).to(device).to(torch.bfloat16)
-    qmodel = replace_module_linear_with_svdq(qmodel, ranks=ranks_cfg, w_percentile=best_p, smooth_map=smooth_map)
-    if best_state is not None:
-        qmodel.load_state_dict(best_state)
+    # Directly use the best candidate model without re-building
+    qmodel = best_model if best_model is not None else cand
 
     # Optional: save to disk
     if ckpt_out:
