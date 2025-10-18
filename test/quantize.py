@@ -46,11 +46,11 @@ def compute_group_scales_sym_int4(
     G = K // group_size
     res_block = residual.abs().reshape(N, G, group_size)  # (N, G, gs)
     if percentile is None or percentile >= 1.0:
-        res = res_block.amax(dim=-1)  # (N, G)
+        res = res_block.amax(dim=-1) / 7.0  # (N, G)
     else:
         # per-(out,group) robust scale using percentile over group dimension
         q = torch.quantile(res_block.to(torch.float32), percentile, dim=-1)
-        res = q.to(residual.dtype)
+        res = (q / 7.0).to(residual.dtype)
     scales = res.transpose(0, 1).clamp_min(1e-8).to(dtype)       # (G, N)
     return scales
 
@@ -61,7 +61,7 @@ def quantize_residual_to_int4(residual: torch.Tensor, scales: torch.Tensor, grou
     N, K = residual.shape
     G = K // group_size
     s_exp = scales.transpose(0, 1).repeat_interleave(group_size, dim=1)  # (N, K)
-    q = (residual / s_exp).round().clamp_(-8, 7).to(torch.int8)
+    q = (residual / s_exp).round().clamp_(-7, 7).to(torch.int8)
     return q  # (N, K)
 
 
@@ -183,15 +183,7 @@ def convert_linear_to_svdq(
         print(f"[quantize][debug] layer recon rel-MSE={rel:.6e}")
     except Exception as _:
         pass
-    
-    # if DEBUG_PRINT:
-    #     # print original weight shape and svdq packed weight shape
-    #     print(f"original weight shape: {linear.weight.shape}")
-    #     print(f"svdq weight shape: {svdq.qweight.shape}")  # (N, K//2) packed int4
-    #     print(f"wscales shape: {svdq.wscales.shape}")      # (K//64, N)
-    #     # print project up and down shape
-    #     print(f"project up shape: {svdq.proj_up.shape}")
-    #     print(f"project down shape: {svdq.proj_down.shape}")
+
     
     return svdq
 
@@ -209,7 +201,8 @@ def replace_module_linear_with_svdq(
         if isinstance(child, nn.Linear):
             # Heuristic: first layer before ReLU -> act_unsigned=False; after ReLU -> act_unsigned=True
             r = ranks.get(full_name, 32)
-            act_unsigned = (full_name != "layer1")  # layer2 gets unsigned activations after ReLU
+            # act_unsigned = (full_name != "layer1")  # layer2 gets unsigned activations after ReLU
+            act_unsigned = False
             setattr(
                 module,
                 name,
