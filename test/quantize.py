@@ -13,7 +13,7 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from deepcompressor.backend.nunchaku.utils import NunchakuWeightPacker
+from deepcompressor.backend.nunchaku.utils import NunchakuWeightPacker, convert_to_nunchaku_w4x4y16_linear_weight
 
 DEBUG_PRINT = True
 
@@ -61,7 +61,7 @@ def quantize_residual_to_int4(residual: torch.Tensor, scales: torch.Tensor, grou
     N, K = residual.shape
     G = K // group_size
     s_exp = scales.transpose(0, 1).repeat_interleave(group_size, dim=1)  # (N, K)
-    q = (residual / s_exp).round().clamp_(-7, 7).to(torch.int8)
+    q = (residual / s_exp).round().clamp_(-8, 7).to(torch.int8)
     return q  # (N, K)
 
 
@@ -137,7 +137,7 @@ def convert_linear_to_svdq(
     else:
         lora_down, lora_up = lora_down_b, lora_up_b
 
-    # 3) Symmetric INT4 quantization on residual of W_hat, grouped by K every 64 (percentile-based)
+    # 3) Build packed tensors via official Nunchaku converter (handles residual, scales, low-rank, smooth, bias)
     residual = (W_hat - recon).contiguous()
     wscales = compute_group_scales_sym_int4(
         residual,
@@ -145,10 +145,37 @@ def convert_linear_to_svdq(
         dtype=torch_dtype,
         percentile=w_percentile,
     )  # (K//64, N)
-    q = quantize_residual_to_int4(residual, wscales, group_size=64)                      # (N, K)
-    qweight, wscales_packed = pack_with_nunchaku_layout(q, wscales, group_size=64)
+    ng = in_features // 64
+    wscales_4d = wscales.t().reshape(out_features, 1, ng, 1)
+    # smooth [K] -> [K,1]
+    if smooth_factor is not None:
+        sm_2d = smooth_factor.view(-1, 1).to(torch_dtype, non_blocking=True)
+    else:
+        sm_2d = torch.ones(in_features, 1, dtype=torch_dtype, device=device)
+    # bias [N] -> [N,1]
+    if linear.bias is not None:
+        b_2d = linear.bias.view(-1, 1).to(torch_dtype)
+    else:
+        b_2d = torch.zeros(out_features, 1, dtype=torch_dtype, device=device)
+    # low-rank tuple
+    lora_tuple = (lora_down.to(torch_dtype), lora_up.to(torch_dtype))
+    print(f"[quantize] lora_tuple shape: {lora_tuple[0].shape}, {lora_tuple[1].shape}")
+    qweight, wscales_packed, bias_packed, smooth_packed, lora_packed, _ = convert_to_nunchaku_w4x4y16_linear_weight(
+        weight=residual.to(torch_dtype),
+        scale=wscales_4d.to(torch_dtype),
+        bias=b_2d,
+        smooth=sm_2d,
+        lora=lora_tuple,
+        float_point=False,
+        subscale=None,
+    )
+    print(f"[quantize] qweight shape: {qweight.shape}")
+    print(f"[quantize] wscales_packed shape: {wscales_packed.shape}")
+    print(f"[quantize] bias_packed shape: {bias_packed.shape}")
+    print(f"[quantize] smooth_packed shape: {smooth_packed.shape}")
+    print(f"[quantize] lora_packed shape: {lora_packed[0].shape}, {lora_packed[1].shape}")
 
-    # 4) Build SVDQ layer and fill parameters
+    # 4) Build SVDQ layer and fill parameters (all already packed for Nunchaku)
     svdq = SVDQW4A4Linear.from_linear(
         linear,
         rank=r_aligned,
@@ -157,31 +184,30 @@ def convert_linear_to_svdq(
     )
     svdq.qweight.copy_(qweight)
     svdq.wscales.copy_(wscales_packed)
-    svdq.proj_down.copy_(lora_down.to(torch_dtype))
-    svdq.proj_up.copy_(lora_up.to(torch_dtype))
-    if linear.bias is not None:
-        svdq.bias.copy_(linear.bias.data.to(torch_dtype))
-    if smooth_factor is not None:
-        svdq.smooth_factor.copy_(smooth_factor.to(torch_dtype, non_blocking=True))
-        svdq.smooth_factor_orig.copy_(smooth_factor.to(torch_dtype, non_blocking=True))
-    else:
-        svdq.smooth_factor.fill_(1)
-        svdq.smooth_factor_orig.fill_(1)
+    # low-rank packed
+    if lora_packed is not None:
+        svdq.proj_down.copy_(lora_packed[0])
+        svdq.proj_up.copy_(lora_packed[1])
+    # packed bias and smooth
+    svdq.bias.copy_(bias_packed.view(-1))
+    svdq.smooth_factor.copy_(smooth_packed)
+    svdq.smooth_factor_orig.copy_(smooth_packed)
 
     # 5) Debug: reconstruct W_hat from (q, scales) + low-rank and report error
     try:
+        # Use local q-debug (pre-pack) to measure approximation quality consistently
         N, K = residual.shape
         gs = 64
-        G = K // gs
         s_rep = wscales.transpose(0, 1).repeat_interleave(gs, dim=1).to(residual.dtype)  # (N, K)
-        W_hat_recon = (q.to(residual.dtype) * s_rep)
+        q_dbg = quantize_residual_to_int4(residual, wscales, group_size=gs).to(residual.dtype)
+        W_hat_recon = (q_dbg * s_rep)
         if r_aligned > 0:
             W_hat_recon = W_hat_recon + (lora_up @ lora_down.t()).to(residual.dtype)
         err = torch.mean((W_hat_recon - W_hat).float().pow(2))
         ref = torch.mean(W_hat.float().pow(2)) + 1e-12
         rel = (err / ref).item()
         print(f"[quantize][debug] layer recon rel-MSE={rel:.6e}")
-    except Exception as _:
+    except Exception:
         pass
 
     
