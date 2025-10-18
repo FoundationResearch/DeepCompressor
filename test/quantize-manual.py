@@ -7,6 +7,7 @@ import time
 
 from model import TwoLayerMLP
 from nunchaku.models.linear import SVDQW4A4Linear
+from svdlinear import svdlinear_forward_w4a4
 
 # add repository root to sys.path so local 'deepcompressor' can be imported
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -198,6 +199,19 @@ def convert_linear_to_svdq(
     svdq.smooth_factor.copy_(smooth_factor)
     svdq.smooth_factor_orig.copy_(smooth_factor)
 
+    # 4.1) Store manual simulation tensors on module for PyTorch-only validation
+    # Unpacked per-group weight scales: (K//64, N)
+    svdq._manual_wscales = wscales.clone()
+    # Unpacked low-rank matrices
+    svdq._manual_lora_down = lora_down.to(torch_dtype).clone()
+    svdq._manual_lora_up = lora_up.to(torch_dtype).clone()
+    # Unpacked residual int4 values as int8: (N, K)
+    svdq._manual_q_int8 = quantize_residual_to_int4(residual, wscales, group_size=64).to(torch.int8)
+    # Smooth vector over input channels (shape K, used to divide activations)
+    svdq._manual_smooth = (smooth_factor if smooth_factor is not None else torch.ones(in_features, device=device, dtype=torch_dtype)).clone()
+    svdq._manual_group_size = 64
+    svdq._manual_act_unsigned = act_unsigned
+
     # 5) Debug: reconstruct W_hat from (q, scales) + low-rank and report error
     try:
         # Use local q-debug (pre-pack) to measure approximation quality consistently
@@ -378,9 +392,45 @@ def quantize_and_save(
             cand, ranks=ranks_cfg, w_percentile=p, smooth_map=smooth_map
         ).to(device).eval()
         with torch.inference_mode():
-            y_q = cand(x_calib.unsqueeze(0)) if x_calib.ndim == 2 else cand(x_calib)
-            if x_calib.ndim == 2:
-                y_q = y_q.squeeze(0)
+            # Manual PyTorch SVDQ simulation (avoid engine) on calibration batch
+            def forward_manual(m: nn.Module, x: torch.Tensor) -> torch.Tensor:
+                x_in = x
+                # layer1
+                l1 = getattr(m, "layer1")
+                s1 = l1._manual_smooth.view(1, -1)
+                x1 = x_in / s1
+                y1 = svdlinear_forward_w4a4(
+                    x1,
+                    l1._manual_q_int8,
+                    l1._manual_wscales,
+                    l1._manual_lora_down,
+                    l1._manual_lora_up,
+                    getattr(l1, "bias", None),
+                    group_size=l1._manual_group_size,
+                    act_unsigned=l1._manual_act_unsigned,
+                    with_a4=True,
+                )
+                if hasattr(m, "layer2"):
+                    y1 = torch.relu(y1)
+                    l2 = getattr(m, "layer2")
+                    s2 = l2._manual_smooth.view(1, -1)
+                    x2 = y1 / s2
+                    y2 = svdlinear_forward_w4a4(
+                        x2,
+                        l2._manual_q_int8,
+                        l2._manual_wscales,
+                        l2._manual_lora_down,
+                        l2._manual_lora_up,
+                        getattr(l2, "bias", None),
+                        group_size=l2._manual_group_size,
+                        act_unsigned=l2._manual_act_unsigned,
+                        with_a4=True,
+                    )
+                    return y2
+                else:
+                    return y1
+
+            y_q = forward_manual(cand, x_calib)
         loss = torch.mean((y_q - y_ref).float().pow(2)).item()
         print(f"[quantize][search] p={p} MSE={loss:.6f} time={(time.time()-t_p):.3f}s")
         if loss < best_loss:
@@ -414,7 +464,7 @@ def quantize_and_save(
         )
         print(f"[quantize] Saved checkpoint to {ckpt_out} in {(time.time()-t_sv):.3f}s")
 
-    # Direct inference without saving/loading
+    # Direct inference without saving/loading (manual simulation)
     torch.manual_seed(42)
     x = torch.randn(1024, cfg["in_features"], dtype=torch.bfloat16, device=device)
     # Ground truth: sum along features if out_features==1; otherwise first head tracks sum, second head = -sum
@@ -434,18 +484,58 @@ def quantize_and_save(
         squeeze_back = True
     t_inf = time.time()
     with torch.inference_mode():
-        pred = qmodel(x.unsqueeze(0)) if x.ndim == 2 else qmodel(x)
-        if x.ndim == 2:
-            pred = pred.squeeze(0)
-        if squeeze_back:
+        # Use the same manual forward on the final qmodel
+        def forward_manual_final(m: nn.Module, x_in: torch.Tensor) -> torch.Tensor:
+            # layer1
+            l1 = getattr(m, "layer1")
+            s1 = l1._manual_smooth.view(1, -1)
+            x1 = x_in / s1
+            y1 = svdlinear_forward_w4a4(
+                x1,
+                l1._manual_q_int8,
+                l1._manual_wscales,
+                l1._manual_lora_down,
+                l1._manual_lora_up,
+                getattr(l1, "bias", None),
+                group_size=l1._manual_group_size,
+                act_unsigned=l1._manual_act_unsigned,
+                with_a4=True,
+            )
+            if hasattr(m, "layer2"):
+                y1 = torch.relu(y1)
+                l2 = getattr(m, "layer2")
+                s2 = l2._manual_smooth.view(1, -1)
+                x2 = y1 / s2
+                y2 = svdlinear_forward_w4a4(
+                    x2,
+                    l2._manual_q_int8,
+                    l2._manual_wscales,
+                    l2._manual_lora_down,
+                    l2._manual_lora_up,
+                    getattr(l2, "bias", None),
+                    group_size=l2._manual_group_size,
+                    act_unsigned=l2._manual_act_unsigned,
+                    with_a4=True,
+                )
+                return y2
+            else:
+                return y1
+
+        pred = forward_manual_final(qmodel, x)
+        # match target shape if we lifted batch dim earlier
+        if squeeze_back and pred.ndim == 3 and pred.shape[0] == 1:
             pred = pred.squeeze(0)
     loss = nn.MSELoss()(pred, y)
     print(f"[quantize] Direct-infer loss={loss.item():.6f} in {(time.time()-t_inf):.3f}s")
-    for i in range(min(5, x.shape[0] if not squeeze_back else pred.shape[0])):
+    num_show = min(5, pred.shape[0])
+    for i in range(num_show):
         if cfg.get("out_features", 1) == 1:
-            print(f"  GT sum={y[i].item():.4f} | Pred={pred[i].item():.4f}")
+            print(f"  GT sum={y[i,0].item():.4f} | Pred={pred[i,0].item():.4f}")
         else:
-            print(f"  GT: [{y[i,0].item():.4f}, {y[i,1].item():.4f}] | Pred: [{pred[i,0].item():.4f}, {pred[i,1].item():.4f}]")
+            # show first two channels
+            print(
+                f"  GT: [{y[i,0].item():.4f}, {y[i,1].item():.4f}] | Pred: [{pred[i,0].item():.4f}, {pred[i,1].item():.4f}]"
+            )
     print(f"[quantize] === Done in {(time.time()-t0):.3f}s ===")
     return ckpt_out
 
