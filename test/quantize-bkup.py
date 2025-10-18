@@ -183,18 +183,18 @@ def convert_linear_to_svdq(
         act_unsigned=act_unsigned,
     )
     svdq.qweight.copy_(qweight)
-    svdq.wscales.copy_(wscales)
+    svdq.wscales.copy_(wscales_packed)
     # low-rank packed
     if lora_packed is not None:
-        svdq.proj_down.copy_(lora_tuple[0])
-        svdq.proj_up.copy_(lora_tuple[1])
+        svdq.proj_down.copy_(lora_packed[0])
+        svdq.proj_up.copy_(lora_packed[1])
     
     # svdq.proj_down.copy_(lora_down.to(torch_dtype))
     # svdq.proj_up.copy_(lora_up.to(torch_dtype))
     
     # packed bias and smooth
-    svdq.bias.copy_(linear.bias)
-    svdq.smooth_factor.copy_(smooth_factor)
+    svdq.bias.copy_(bias_packed)
+    svdq.smooth_factor.copy_(smooth_packed)
     svdq.smooth_factor_orig.copy_(smooth_factor)
 
     # 5) Debug: reconstruct W_hat from (q, scales) + low-rank and report error
