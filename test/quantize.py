@@ -186,7 +186,7 @@ def convert_linear_to_svdq(
     svdq.wscales.copy_(wscales_packed)
     # low-rank packed
     if lora_packed is not None:
-        svdq.proj_down.copy_(lora_packed[0].transpose(0, 1).contiguous())
+        svdq.proj_down.copy_(lora_packed[0])
         svdq.proj_up.copy_(lora_packed[1])
     
     # low-rank original, because lora_packed's proj_down have padded weight, which cause misalignment.
