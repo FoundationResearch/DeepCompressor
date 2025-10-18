@@ -185,9 +185,14 @@ def convert_linear_to_svdq(
     svdq.qweight.copy_(qweight)
     svdq.wscales.copy_(wscales_packed)
     # low-rank packed
-    if lora_packed is not None:
-        svdq.proj_down.copy_(lora_packed[0])
-        svdq.proj_up.copy_(lora_packed[1])
+    # if lora_packed is not None:
+    #     svdq.proj_down.copy_(lora_packed[0])
+    #     svdq.proj_up.copy_(lora_packed[1])
+    
+    # low-rank original, because lora_packed's proj_down have padded weight, which cause misalignment.
+    svdq.proj_down.copy_(lora_down.to(torch_dtype))
+    svdq.proj_up.copy_(lora_up.to(torch_dtype))
+    
     # packed bias and smooth
     svdq.bias.copy_(bias_packed.view(-1))
     svdq.smooth_factor.copy_(smooth_packed)
