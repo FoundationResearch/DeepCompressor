@@ -93,7 +93,7 @@ def pack_with_nunchaku_layout(q_int4: torch.Tensor, scales: torch.Tensor, group_
     scales_4d = packer.pad_scale(scales_4d.to(dtype=scales.dtype), group_size=group_size)
     wscales_packed = packer.pack_scale(scales_4d, group_size=group_size)
     # Final dtypes/shapes: int8 and bf16/fp16, (N, K//2) and (K//group_size, N)
-    return qweight_packed.to(torch.int8), wscales_packed
+    return qweight_packed, wscales_packed
 
 
 @torch.no_grad()
