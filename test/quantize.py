@@ -114,12 +114,14 @@ def convert_linear_to_svdq(
     torch_dtype = torch.bfloat16 if linear.weight.dtype == torch.bfloat16 else torch.float16
     device = linear.weight.device
 
-    # 1) Apply SmoothQuant to weights (migrate outliers): W_hat = W / s
+    # 1) Apply SmoothQuant to weights (migrate outliers):
+    #    kernel divides activations by s => to preserve y = x W^T,
+    #    we must scale weights by s: W_hat = (s) * W
     if smooth_factor is not None:
         s = smooth_factor.view(1, in_features).to(linear.weight.device, dtype=linear.weight.dtype)
     else:
         s = torch.ones(1, in_features, device=linear.weight.device, dtype=linear.weight.dtype)
-    W_hat = (linear.weight.data / s).contiguous()
+    W_hat = (linear.weight.data * s).contiguous()
 
     # 2) Low-rank branch via truncated SVD on W_hat; align rank to multiples of 16 for kernel
     r_base = min(rank, in_features, out_features)
