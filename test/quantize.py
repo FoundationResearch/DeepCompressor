@@ -334,6 +334,7 @@ def quantize_and_save(
     t_sm = time.time()
     print("[quantize] Compute SmoothQuant factors (alpha=0.5, clamp=2^[-2,2])")
     smooth_map = compute_smooth_factors(model, x_calib, alpha=0.5, clamp_exp=2.0)
+    print(f"[quantize] smooth_map: {smooth_map}")
     print(f"[quantize] SmoothQuant done in {(time.time()-t_sm):.3f}s")
 
     # Small grid over weight percentile
