@@ -170,10 +170,10 @@ def convert_linear_to_svdq(
         subscale=None,
     )
     print(f"[quantize] qweight shape: {qweight.shape}")
-    print(f"[quantize] wscales_packed shape: {wscales_packed.shape}")
-    print(f"[quantize] bias_packed shape: {bias_packed.shape}")
-    print(f"[quantize] smooth_packed shape: {smooth_packed.shape}")
-    print(f"[quantize] lora_packed shape: {lora_packed[0].shape}, {lora_packed[1].shape}")
+    print(f"[quantize] wscales_packed shape: {wscales_packed.shape}, dtype={wscales_packed.dtype}")
+    print(f"[quantize] bias_packed shape: {bias_packed.shape}, dtype={bias_packed.dtype}")
+    print(f"[quantize] smooth_packed shape: {smooth_packed.shape}, dtype={smooth_packed.dtype}")
+    print(f"[quantize] lora_packed shape: {lora_packed[0].shape}, {lora_packed[1].shape}, dtype={lora_packed[0].dtype}, {lora_packed[1].dtype}")
 
     # 4) Build SVDQ layer and fill parameters (all already packed for Nunchaku)
     svdq = SVDQW4A4Linear.from_linear(
@@ -194,9 +194,9 @@ def convert_linear_to_svdq(
     # svdq.proj_up.copy_(lora_up.to(torch_dtype))
     
     # packed bias and smooth
-    svdq.bias.copy_(bias_packed.view(-1))
-    svdq.smooth_factor.copy_(smooth_packed)
-    svdq.smooth_factor_orig.copy_(smooth_packed)
+    svdq.bias.copy_(linear.bias)
+    svdq.smooth_factor.copy_(smooth_factor)
+    svdq.smooth_factor_orig.copy_(smooth_factor)
 
     # 5) Debug: reconstruct W_hat from (q, scales) + low-rank and report error
     try:
@@ -215,7 +215,7 @@ def convert_linear_to_svdq(
     except Exception:
         pass
 
-    
+    print(f"[quantize] svdq.precision: {svdq.precision}")
     return svdq
 
 
@@ -228,6 +228,7 @@ def replace_module_linear_with_svdq(
 ) -> nn.Module:
     ranks = ranks or {}
     for name, child in list(module.named_children()):
+        print(f"[quantize] ==== Processing layer: {name} ====")
         full_name = name
         if isinstance(child, nn.Linear):
             # Heuristic: first layer before ReLU -> act_unsigned=False; after ReLU -> act_unsigned=True
