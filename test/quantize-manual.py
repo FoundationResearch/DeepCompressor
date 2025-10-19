@@ -24,7 +24,9 @@ def quantize_and_save(
 
     # Quantize full model using our manual class
     ranks_cfg = {"layer1": 32, "layer2": 32}
-    qmodel = SVDQuantLinearManual.quantize_model(model, ranks=ranks_cfg, device=device)
+    torch.manual_seed(123)
+    x_calib = torch.randn(2048, cfg["in_features"], dtype=torch.bfloat16, device=device)
+    qmodel = SVDQuantLinearManual.quantize_model(model, ranks=ranks_cfg, x_calib=x_calib, device=device)
 
     # Optional save
     if ckpt_out:

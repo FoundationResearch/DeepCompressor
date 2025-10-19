@@ -60,7 +60,7 @@ def _quantize_residual_to_int4(residual: torch.Tensor, scales: torch.Tensor, gro
 
 
 class SVDQuantLinearManual(nn.Module):
-    def __init__(self, in_features: int, out_features: int, bias: bool = True, *, dtype=torch.bfloat16, act_unsigned: bool = False):
+    def __init__(self, in_features: int, out_features: int, bias: bool = True, *, dtype=torch.bfloat16, act_unsigned: bool = False, rank: int = 0):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
@@ -71,8 +71,9 @@ class SVDQuantLinearManual(nn.Module):
         # Buffers for manual simulation
         self.register_buffer("_manual_q_int8", torch.zeros(out_features, in_features, dtype=torch.int8))
         self.register_buffer("_manual_wscales", torch.ones(in_features // self.group_size, out_features, dtype=dtype))
-        self.register_buffer("_manual_lora_down", torch.zeros(in_features, 0, dtype=dtype))
-        self.register_buffer("_manual_lora_up", torch.zeros(out_features, 0, dtype=dtype))
+        r = int(rank) if rank is not None else 0
+        self.register_buffer("_manual_lora_down", torch.zeros(in_features, r, dtype=dtype))
+        self.register_buffer("_manual_lora_up", torch.zeros(out_features, r, dtype=dtype))
         self.register_buffer("_manual_smooth", torch.ones(in_features, dtype=dtype))
         if bias:
             self.register_buffer("bias", torch.zeros(out_features, dtype=dtype))
@@ -110,7 +111,7 @@ class SVDQuantLinearManual(nn.Module):
         dtype = torch.bfloat16 if linear.weight.dtype == torch.bfloat16 else torch.float16
         device = linear.weight.device
 
-        mod = cls(in_features, out_features, bias=(linear.bias is not None), dtype=dtype, act_unsigned=act_unsigned).to(device)
+        mod = cls(in_features, out_features, bias=(linear.bias is not None), dtype=dtype, act_unsigned=act_unsigned, rank=0).to(device)
 
         # Smooth factor and smoothed weights
         s = cls._compute_smooth_from_layer_inputs(layer_inputs.to(device), linear.weight.data, alpha=0.5, clamp_exp=2.0).to(device=device, dtype=linear.weight.dtype)
@@ -136,10 +137,14 @@ class SVDQuantLinearManual(nn.Module):
         # Store manual tensors
         mod._manual_q_int8.copy_(q_int8)
         mod._manual_wscales.copy_(wscales)
-        mod._manual_lora_down = mod._manual_lora_down.to(dtype).new_empty((in_features, lora_down.shape[1]))
-        mod._manual_lora_up = mod._manual_lora_up.to(dtype).new_empty((out_features, lora_up.shape[1]))
-        mod._manual_lora_down.copy_(lora_down.to(dtype))
-        mod._manual_lora_up.copy_(lora_up.to(dtype))
+        # Resize and fill low-rank buffers
+        r_use = lora_down.shape[1]
+        if mod._manual_lora_down.shape[1] != r_use:
+            mod._buffers["_manual_lora_down"] = lora_down.to(dtype)
+            mod._buffers["_manual_lora_up"] = lora_up.to(dtype)
+        else:
+            mod._manual_lora_down.copy_(lora_down.to(dtype))
+            mod._manual_lora_up.copy_(lora_up.to(dtype))
         mod._manual_smooth.copy_(s.to(dtype))
         if linear.bias is not None:
             mod.bias.copy_(linear.bias.to(dtype))
@@ -240,6 +245,7 @@ class SVDQuantLinearManual(nn.Module):
         model: nn.Module,
         *,
         ranks: dict[str, int] | None = None,
+        x_calib: torch.Tensor | None = None,
         calib_bs: int = 2048,
         w_percentile: float | None = 0.999,
         device: str | torch.device | None = None,
@@ -257,7 +263,10 @@ class SVDQuantLinearManual(nn.Module):
                 break
         assert in_features is not None, "No nn.Linear found in model."
 
-        x_calib = torch.randn(calib_bs, in_features, dtype=torch.bfloat16, device=device)
+        if x_calib is None:
+            x_calib = torch.randn(calib_bs, in_features, dtype=torch.bfloat16, device=device)
+        else:
+            x_calib = x_calib.to(device)
         smooth_map = SVDQuantLinearManual.compute_smooth_factors(model, x_calib, alpha=alpha, clamp_exp=clamp_exp)
 
         ranks = ranks or {}
@@ -282,6 +291,36 @@ class SVDQuantLinearManual(nn.Module):
                         act_unsigned = False
                         layer_inputs = SVDQuantLinearManual.collect_layer_inputs(model, x_calib, device).get(subname, x_calib)
                         setattr(child, subname, SVDQuantLinearManual.from_linear_and_inputs(subchild, layer_inputs, rank=r, w_percentile=w_percentile, act_unsigned=act_unsigned))
+        return model
+
+    @staticmethod
+    @torch.no_grad()
+    def materialize_from_state_dict(model: nn.Module, state_dict: dict, *, device: str | torch.device | None = None) -> nn.Module:
+        """Replace nn.Linear layers with SVDQuantLinearManual using ranks inferred from state_dict.
+
+        Assumes keys like '<name>._manual_lora_down' exist to indicate rank.
+        """
+        device = device or next(model.parameters()).device
+        model = model.to(device).eval()
+
+        def infer_rank(prefix: str) -> int:
+            key = f"{prefix}._manual_lora_down"
+            if key in state_dict:
+                return int(state_dict[key].shape[1])
+            return 0
+
+        for name, child in list(model.named_children()):
+            full = name
+            if isinstance(child, nn.Linear):
+                r = infer_rank(full)
+                mod = SVDQuantLinearManual(child.in_features, child.out_features, bias=(child.bias is not None), dtype=torch.bfloat16 if child.weight.dtype == torch.bfloat16 else torch.float16, act_unsigned=False, rank=r).to(device)
+                setattr(model, name, mod)
+            else:
+                for subname, subchild in list(child.named_children()):
+                    if isinstance(subchild, nn.Linear):
+                        r = infer_rank(subname)
+                        mod = SVDQuantLinearManual(subchild.in_features, subchild.out_features, bias=(subchild.bias is not None), dtype=torch.bfloat16 if subchild.weight.dtype == torch.bfloat16 else torch.float16, act_unsigned=False, rank=r).to(device)
+                        setattr(child, subname, mod)
         return model
 
 

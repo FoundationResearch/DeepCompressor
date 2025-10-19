@@ -10,15 +10,17 @@ from SVDQuantLinearManual import SVDQuantLinearManual
 def run_infer(
     ckpt_path: str = "./ckpt/mlp_demo_svdq.pt",
     device: str | torch.device = "cuda",
+    x_calib: torch.Tensor | None = None,
 ):
     assert os.path.exists(ckpt_path), f"Checkpoint not found: {ckpt_path}"
     ckpt = torch.load(ckpt_path, map_location=device)
     cfg = ckpt["config"]
 
-    # Rebuild model and load quantized state
+    # Materialize structure and load weights (no re-quantization during inference)
     model = TwoLayerMLP(**cfg).to(device).to(torch.bfloat16).eval()
-    qmodel = SVDQuantLinearManual.quantize_model(model, ranks={"layer1": 32, "layer2": 32}, device=device)
-    qmodel.load_state_dict(ckpt["state_dict"], strict=False)
+    # Build a skeleton with correct SVDQ modules based on saved state
+    qmodel = SVDQuantLinearManual.materialize_from_state_dict(model, ckpt["state_dict"], device=device)
+    qmodel.load_state_dict(ckpt["state_dict"], strict=True)
     qmodel.eval()
 
     # Generate inputs and GT like training target
