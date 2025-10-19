@@ -10,11 +10,11 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 # Local utils (do NOT import deepcompressor backend here)
-from .utils import (
-    NunchakuWeightPacker,
-    convert_to_nunchaku_w4x4y16_linear_weight,
-)
-from .svdlinear import svdlinear_forward_w4a4
+# from utils import (
+#     NunchakuWeightPacker,
+#     convert_to_nunchaku_w4x4y16_linear_weight,
+# )
+from svdlinear import svdlinear_forward_w4a4
 
 
 @torch.no_grad()

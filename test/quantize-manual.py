@@ -23,7 +23,7 @@ def quantize_and_save(
     model.eval()
 
     # Quantize full model using our manual class
-    ranks_cfg = {"layer1": 128, "layer2": 128}
+    ranks_cfg = {"layer1": 32, "layer2": 32}
     qmodel = SVDQuantLinearManual.quantize_model(model, ranks=ranks_cfg, device=device)
 
     # Optional save
@@ -37,6 +37,25 @@ def quantize_and_save(
     x = torch.randn(1024, cfg["in_features"], dtype=torch.bfloat16, device=device)
     with torch.inference_mode():
         pred = qmodel(x)
+    # Build ground-truth as in quantize-bkup.py
+    if cfg.get("out_features", 1) == 1:
+        y = torch.sum(x, dim=1, keepdim=True)
+    else:
+        s = torch.sum(x, dim=1, keepdim=True)
+        y = torch.zeros(x.shape[0], cfg["out_features"], dtype=torch.bfloat16, device=device)
+        y[:, 0:1] = s
+        if cfg["out_features"] > 1:
+            y[:, 1:2] = -s
+    loss = nn.MSELoss()(pred, y)
+    print(f"[quantize] Direct-infer loss={loss.item():.6f}")
+    num_show = min(5, pred.shape[0])
+    for i in range(num_show):
+        if cfg.get("out_features", 1) == 1:
+            print(f"  GT sum={y[i,0].item():.4f} | Pred={pred[i,0].item():.4f}")
+        else:
+            print(
+                f"  GT: [{y[i,0].item():.4f}, {y[i,1].item():.4f}] | Pred: [{pred[i,0].item():.4f}, {pred[i,1].item():.4f}]"
+            )
     print(f"[quantize] Forward OK: pred shape={tuple(pred.shape)} in {(time.time()-t0):.3f}s")
     return ckpt_out
 
