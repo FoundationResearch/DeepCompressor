@@ -54,11 +54,11 @@ def svdlinear_forward_w4a4(
     with_a4: bool = True,
     a_percentile: float | None = 1.0,
 ) -> torch.Tensor:
-    """Manual SVDQuant W4A4 inference in PyTorch with int32 accumulators.
+    """Manual SVDQuant W4A4 inference in PyTorch with int8 accumulators.
 
     Args:
         x: input tensor, shape (B, K) or (B, S, K)
-        q_int32: signed int32 quantized residual weights in int4 range, shape (N, K)
+        q_int8: signed int8 quantized residual weights in int4 range, shape (N, K)
         wscales: per-group weight scales, shape (K//group_size, N), bf16/fp16
         lora_down: (K, R) bf16/fp16
         lora_up: (N, R) bf16/fp16
