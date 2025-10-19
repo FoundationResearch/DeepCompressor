@@ -3,7 +3,6 @@
 
 import torch
 
-from ..tinychat.utils import convert_to_tinychat_w4x16y16_linear_weight
 from ..utils import MmaWeightPackerBase, ceil_divide, fp_quantize, pad
 
 __all__ = [
@@ -336,33 +335,3 @@ def convert_to_nunchaku_w8x8y16_linear_weight(
     scale = packer.pack_scale(packer.pad_scale(scale.to(dtype=dtype), group_size=-1), group_size=-1)
     bias = packer.pack_scale(packer.pad_scale(bias.to(dtype=dtype), group_size=-1), group_size=-1).view(-1)
     return weight, scale, bias
-
-
-def convert_to_nunchaku_w4x16_linear_weight(
-    weight: torch.Tensor,
-    scale: torch.Tensor,
-    zero: torch.Tensor | None = None,
-    bias: torch.Tensor | None = None,
-    adanorm_splits: int = 1,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    oc, ic = weight.shape
-    assert scale.ndim == 4, "scale tensor should be 4D."
-    assert scale.shape[0] == oc
-    assert scale.shape[1] == scale.shape[3] == 1
-    ng = scale.shape[2]
-    if bias is None:
-        bias = torch.zeros([oc], dtype=weight.dtype, device=weight.device)
-    assert oc % adanorm_splits == 0, "output channel size should be divisible by splits."
-    if adanorm_splits > 1:
-        weight = weight.view(adanorm_splits, oc // adanorm_splits, ic).transpose(0, 1).reshape(oc, ic)
-        scale = scale.view(adanorm_splits, oc // adanorm_splits, ng).transpose(0, 1).reshape(oc, 1, ng, 1)
-        bias = bias.reshape(adanorm_splits, oc // adanorm_splits).transpose(0, 1)
-        delta = [0] * adanorm_splits
-        delta[1] = delta[-2] = 1
-        bias = bias.add_(torch.tensor(delta, dtype=bias.dtype, device=bias.device))
-        bias = bias.reshape(oc)
-    weight, scale, zero = convert_to_tinychat_w4x16y16_linear_weight(
-        weight=weight, scale=scale, zero=torch.full_like(scale, 7) if zero is None else zero, zero_pre_scaled=True
-    )
-    weight = weight.view(torch.int32)
-    return weight, scale, zero, bias
