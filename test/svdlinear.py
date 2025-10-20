@@ -69,9 +69,10 @@ def svdlinear_forward_w4a4(
         a_percentile: optional percentile for activation scaling
 
     Returns:
-        y: output tensor, shape (B, N), dtype float32
+        y: output tensor, shape (B, N), dtype out_dtype is the same as x.dtype
     """
     orig_shape = x.shape
+    out_dtype = x.dtype
     if x.ndim == 3:
         b, s, k = x.shape
         x = x.reshape(b * s, k)
@@ -121,6 +122,6 @@ def svdlinear_forward_w4a4(
 
     if len(orig_shape) == 3:
         y = y.reshape(b, s, n)
-    return y
+    return y.to(out_dtype)
 
 
