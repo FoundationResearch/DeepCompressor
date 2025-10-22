@@ -98,8 +98,8 @@ def svdlinear_forward_w4a4(
             q_cp = cp.from_dlpack(torch.utils.dlpack.to_dlpack(q_int8.contiguous()))
             for gi in range(g):
                 k0, k1 = gi * group_size, (gi + 1) * group_size
-                # (B, gs) @ (gs, N) -> (B, N), int8*int8 -> int32 accumulation
-                prod_cp = x_q_cp[:, k0:k1].astype(cp.int8) @ q_cp[:, k0:k1].astype(cp.int8).T
+                # (B, gs) @ (gs, N) -> (B, N); cast to int32 to guarantee int32 accumulation and avoid overflow
+                prod_cp = x_q_cp[:, k0:k1].astype(cp.int32) @ q_cp[:, k0:k1].astype(cp.int32).T
                 prod_t = torch.utils.dlpack.from_dlpack(prod_cp.astype(cp.float32).toDlpack())
                 # scales in torch: (B, N)
                 scale_t = a_scales[:, gi].unsqueeze(1) * wscales[gi, :].unsqueeze(0)
@@ -114,6 +114,7 @@ def svdlinear_forward_w4a4(
 
     # Low-rank branch in fp
     if lora_down is not None and lora_up is not None and lora_down.numel() > 0 and lora_up.numel() > 0:
+        # Use the provided input `x` (expected pre-smoothed by caller) for low-rank branch
         h = torch.matmul(x.to(lora_down.dtype), lora_down)  # (B, R)
         y.add_(torch.matmul(h, lora_up.t()).to(y.dtype))
 
