@@ -37,16 +37,11 @@ from diffusers.models.transformers.transformer_flux import (
 )
 from diffusers.models.transformers.transformer_sd3 import SD3Transformer2DModel
 # Optional Wan imports (FastVideo Wan)
-try:
-    from fastvideo.models.dits.wanvideo import (
-        WanTransformer3DModel as WanTransformer3DModel_FV,
-        WanTransformerBlock as WanTransformerBlock_FV,
-        WanTransformerBlock_VSA as WanTransformerBlockVSA_FV,
-    )
-except Exception:
-    WanTransformer3DModel_FV = None
-    WanTransformerBlock_FV = None
-    WanTransformerBlockVSA_FV = None
+from fastvideo.models.dits.wanvideo import (
+    WanTransformer3DModel as WanTransformer3DModel_FV,
+    WanTransformerBlock as WanTransformerBlock_FV,
+    WanTransformerBlock_VSA as WanTransformerBlockVSA_FV,
+)
 from diffusers.models.unets.unet_2d import UNet2DModel
 from diffusers.models.unets.unet_2d_blocks import (
     CrossAttnDownBlock2D,
@@ -1731,7 +1726,7 @@ class DiTStruct(DiffusionModelStruct, DiffusionTransformerStruct):
     ) -> "DiTStruct":
         if isinstance(module, DIT_PIPELINE_CLS):
             module = module.transformer
-        if WanTransformer3DModel_FV is not None and isinstance(module, WanTransformer3DModel_FV):
+        if isinstance(module, WanTransformer3DModel_FV):
             # Wan (Diffusers) 3D Transformer mapping
             input_embed, input_embed_rname = module.patch_embedding, "patch_embedding"
             # FastVideo bundles time/text inside condition_embedder; keep the module for traversal
