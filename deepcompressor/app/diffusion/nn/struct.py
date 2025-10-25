@@ -45,6 +45,7 @@ from fastvideo.models.dits.wanvideo import (
 from diffusers.models.transformers.transformer_wan import (
     WanTransformer3DModel as WanTransformer3DModel_HF,
     WanTransformerBlock as WanTransformerBlock_HF,
+    WanAttention as WanAttention_HF,
 )
 from diffusers.models.unets.unet_2d import UNet2DModel
 from diffusers.models.unets.unet_2d_blocks import (
@@ -470,11 +471,21 @@ class DiffusionWanAttentionStruct(AttentionStruct):
         **kwargs,
     ) -> "DiffusionWanAttentionStruct":
         # module is the Wan transformer block; extract shared qkv/out projections
-        to_q = getattr(module, "to_q")
-        to_k = getattr(module, "to_k")
-        to_v = getattr(module, "to_v")
-        to_out = getattr(module, "to_out")
-        assert to_q is not None and to_k is not None and to_v is not None and to_out is not None
+        # module is the attention module itself in Diffusers Wan; handle both HF and FV flavors
+        # Try HF first
+        if isinstance(module, WanAttention_HF):
+            to_q = module.to_q; to_k = module.to_k; to_v = module.to_v
+            o_proj = module.to_out[0]; o_proj_rname = "to_out.0"
+            hidden_size = module.to_q.weight.shape[1]
+            num_heads = module.heads
+        else:
+            # Fallback to FV attention attributes
+            to_q = getattr(module, "to_q"); to_k = getattr(module, "to_k"); to_v = getattr(module, "to_v")
+            o_proj = getattr(module, "to_out")
+            o_proj_rname = "to_out"
+            hidden_size = getattr(module, "dim", None) or getattr(module, "hidden_size", None)
+            num_heads = getattr(module, "num_heads", None) or getattr(module, "num_attention_heads", None)
+        assert to_q is not None and to_k is not None and to_v is not None and o_proj is not None
         # Self (idx==0): use q,k,v; Cross (idx==1): use add_k, add_v with q from to_q
         if idx == 0:
             q_proj, k_proj, v_proj = to_q, to_k, to_v
@@ -490,11 +501,6 @@ class DiffusionWanAttentionStruct(AttentionStruct):
             q_proj_rname, k_proj_rname, v_proj_rname = "to_q", "", ""
             add_q_proj_rname, add_k_proj_rname, add_v_proj_rname, add_o_proj_rname = "", "to_k", "to_v", ""
         # Output projection (ReplicatedLinear acceptable)
-        o_proj = to_out
-        o_proj_rname = "to_out"
-        # Config inference
-        hidden_size = getattr(module, "hidden_dim", None) or getattr(module, "hidden_size", None)
-        num_heads = getattr(module, "num_attention_heads", None)
         assert isinstance(num_heads, int) and isinstance(hidden_size, int)
         inner_size = q_proj.weight.shape[0]
         head_dim = hidden_size // num_heads
@@ -716,6 +722,17 @@ class DiffusionTransformerBlockStruct(TransformerBlockStruct, DiffusionBlockStru
                 zip(self.pre_attn_add_norms, self.pre_attn_add_norm_rnames, strict=True)
             )
         ]
+        # Build attention structs: use DiffusionWanAttentionStruct for Wan
+        self.attn_structs = []
+        for idx, (attn, rname) in enumerate(zip(self.attns, self.attn_rnames, strict=True)):
+            if isinstance(attn, WanAttention_HF):
+                self.attn_structs.append(
+                    DiffusionWanAttentionStruct.construct(attn, parent=self, fname="attn", rname=rname, rkey=self.attn_rkey, idx=idx)
+                )
+            else:
+                self.attn_structs.append(
+                    self.attn_struct_cls.construct(attn, parent=self, fname="attn", rname=rname, rkey=self.attn_rkey, idx=idx)
+                )
         if self.pre_ffn_norm is not None:
             self.pre_ffn_norm_struct = DiffusionModuleStruct(
                 self.pre_ffn_norm, parent=self, fname="pre_ffn_norm", rname=self.pre_ffn_norm_rname, rkey=self.norm_rkey
@@ -898,10 +915,10 @@ class DiffusionTransformerBlockStruct(TransformerBlockStruct, DiffusionBlockStru
         key_map[add_norm_rkey].add(add_norm_key)
         attn_cls = cls.attn_struct_cls
         attn_key = attn_rkey = cls.attn_rkey
-        qkv_proj_key = qkv_proj_rkey = join_name(attn_key, attn_cls.qkv_proj_rkey, sep="_")
-        out_proj_key = out_proj_rkey = join_name(attn_key, attn_cls.out_proj_rkey, sep="_")
-        add_qkv_proj_key = add_qkv_proj_rkey = join_name(attn_key, attn_cls.add_qkv_proj_rkey, sep="_")
-        add_out_proj_key = add_out_proj_rkey = join_name(attn_key, attn_cls.add_out_proj_rkey, sep="_")
+        qkv_proj_key = qkv_proj_rkey = join_name(attn_key, DiffusionAttentionStruct.qkv_proj_rkey, sep="_")
+        out_proj_key = out_proj_rkey = join_name(attn_key, DiffusionAttentionStruct.out_proj_rkey, sep="_")
+        add_qkv_proj_key = add_qkv_proj_rkey = join_name(attn_key, DiffusionAttentionStruct.add_qkv_proj_rkey, sep="_")
+        add_out_proj_key = add_out_proj_rkey = join_name(attn_key, DiffusionAttentionStruct.add_out_proj_rkey, sep="_")
         key_map[attn_rkey].add(qkv_proj_key)
         key_map[attn_rkey].add(out_proj_key)
         if attn_cls.add_qkv_proj_rkey.startswith("add_") and attn_cls.add_out_proj_rkey.startswith("add_"):
@@ -2160,6 +2177,7 @@ class FluxStruct(DiTStruct):
 
 
 DiffusionAttentionStruct.register_factory(Attention, DiffusionAttentionStruct._default_construct)
+DiffusionAttentionStruct.register_factory(WanAttention_HF, DiffusionWanAttentionStruct._default_construct)
 
 DiffusionFeedForwardStruct.register_factory(
     (FeedForward, FluxSingleTransformerBlock, GLUMBConv), DiffusionFeedForwardStruct._default_construct

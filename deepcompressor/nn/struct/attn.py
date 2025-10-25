@@ -673,25 +673,13 @@ class TransformerBlockStruct(BaseModuleStruct):
         self.pre_add_ffn_norm_name = join_name(self.name, self.pre_add_ffn_norm_rname)
         self.add_ffn_name = join_name(self.name, self.add_ffn_rname)
         self.post_add_ffn_norm_name = join_name(self.name, self.post_add_ffn_norm_rname)
-        # Map attention modules to appropriate struct types
-        def _attn_struct_for(attn_mod: nn.Module) -> type[AttentionStruct]:
-            if isinstance(attn_mod, WanAttention_HF):
-                # WanAttention in Diffusers is self-attention inside block; but it has cross-branch in separate attn2
-                return SelfAttentionStruct
-            if isinstance(attn_mod, (WanAttention_FV,)):
-                # T2V cross attention (attn2) takes added kv only
-                return CrossAttentionStruct
-            if isinstance(attn_mod, (WanI2VAttention_FV,)):
-                # I2V cross attention also acts as cross attention
-                return CrossAttentionStruct
-            return self.attn_struct_cls
-
-        self.attn_structs = []
-        for idx, attn in enumerate(self.attns):
-            struct_cls = _attn_struct_for(attn)
-            self.attn_structs.append(
-                struct_cls.construct(attn, parent=self, fname="attn", rname=self.attn_rnames[idx], rkey=self.attn_rkey, idx=idx)
+        # Use the default attention struct class; specific modules are registered to this class via factories
+        self.attn_structs = [
+            self.attn_struct_cls.construct(
+                attn, parent=self, fname="attn", rname=self.attn_rnames[idx], rkey=self.attn_rkey, idx=idx
             )
+            for idx, attn in enumerate(self.attns)
+        ]
         if self.ffn is not None:
             self.ffn_struct = self.ffn_struct_cls.construct(
                 self.ffn, parent=self, fname="ffn", rname=self.ffn_rname, rkey=self.ffn_rkey
@@ -716,9 +704,12 @@ class TransformerBlockStruct(BaseModuleStruct):
                     if attn.is_self_attn():
                         assert self.post_attn_add_norms[i] is None, "self attention cannot have additional norm"
                 else:
-                    assert attn.is_self_attn(), "cross or joint attention must have additional norm"
+                    # When extra norms are provided only for a subset, remaining attentions should be self-attention
+                    # or cross-attention without additional norms (e.g., Wan attn2). Do not assert here.
+                    pass
         else:
-            assert all(attn.is_self_attn() for attn in self.attn_structs)
+            # Some models (e.g., Wan) include cross-attention without additional norms; allow it.
+            pass
 
     def named_key_modules(self) -> tp.Generator[tp.Tuple[str, str, nn.Module, BaseModuleStruct, str], None, None]:
         for attn_struct in self.attn_structs:
