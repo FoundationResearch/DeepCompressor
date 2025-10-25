@@ -41,6 +41,8 @@ from fastvideo.models.dits.wanvideo import (
     WanTransformer3DModel as WanTransformer3DModel_FV,
     WanTransformerBlock as WanTransformerBlock_FV,
     WanTransformerBlock_VSA as WanTransformerBlockVSA_FV,
+    WanT2VCrossAttention as WanAttention_FV,
+    WanI2VCrossAttention as WanI2VAttention_FV,
 )
 from diffusers.models.transformers.transformer_wan import (
     WanTransformer3DModel as WanTransformer3DModel_HF,
@@ -68,6 +70,7 @@ from diffusers.pipelines import (
     StableDiffusionPipeline,
     StableDiffusionXLPipeline,
 )
+from diffusers.pipelines.wan.pipeline_wan import WanPipeline
 
 from deepcompressor.nn.patch.conv import ConcatConv2d, ShiftedConv2d
 from deepcompressor.nn.patch.linear import ConcatLinear, ShiftedLinear
@@ -129,6 +132,7 @@ DIT_PIPELINE_CLS = tp.Union[
     FluxControlPipeline,
     FluxFillPipeline,
     SanaPipeline,
+    WanPipeline,
 ]
 PIPELINE_CLS = tp.Union[UNET_PIPELINE_CLS, DIT_PIPELINE_CLS]
 
@@ -722,17 +726,11 @@ class DiffusionTransformerBlockStruct(TransformerBlockStruct, DiffusionBlockStru
                 zip(self.pre_attn_add_norms, self.pre_attn_add_norm_rnames, strict=True)
             )
         ]
-        # Build attention structs: use DiffusionWanAttentionStruct for Wan
-        self.attn_structs = []
-        for idx, (attn, rname) in enumerate(zip(self.attns, self.attn_rnames, strict=True)):
-            if isinstance(attn, WanAttention_HF):
-                self.attn_structs.append(
-                    DiffusionWanAttentionStruct.construct(attn, parent=self, fname="attn", rname=rname, rkey=self.attn_rkey, idx=idx)
-                )
-            else:
-                self.attn_structs.append(
-                    self.attn_struct_cls.construct(attn, parent=self, fname="attn", rname=rname, rkey=self.attn_rkey, idx=idx)
-                )
+        # Build attention structs via registered factories (handles HF/FV Wan attentions)
+        self.attn_structs = [
+            self.attn_struct_cls.construct(attn, parent=self, fname="attn", rname=rname, rkey=self.attn_rkey, idx=idx)
+            for idx, (attn, rname) in enumerate(zip(self.attns, self.attn_rnames, strict=True))
+        ]
         if self.pre_ffn_norm is not None:
             self.pre_ffn_norm_struct = DiffusionModuleStruct(
                 self.pre_ffn_norm, parent=self, fname="pre_ffn_norm", rname=self.pre_ffn_norm_rname, rkey=self.norm_rkey
@@ -2178,6 +2176,8 @@ class FluxStruct(DiTStruct):
 
 DiffusionAttentionStruct.register_factory(Attention, DiffusionAttentionStruct._default_construct)
 DiffusionAttentionStruct.register_factory(WanAttention_HF, DiffusionWanAttentionStruct._default_construct)
+DiffusionAttentionStruct.register_factory(WanAttention_FV, DiffusionWanAttentionStruct._default_construct)
+DiffusionAttentionStruct.register_factory(WanI2VAttention_FV, DiffusionWanAttentionStruct._default_construct)
 
 DiffusionFeedForwardStruct.register_factory(
     (FeedForward, FluxSingleTransformerBlock, GLUMBConv), DiffusionFeedForwardStruct._default_construct
