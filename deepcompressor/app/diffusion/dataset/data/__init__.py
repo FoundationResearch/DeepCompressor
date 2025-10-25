@@ -7,7 +7,29 @@ import yaml
 __all__ = ["get_dataset"]
 
 
+def _resolve_yaml_path(meta_path: str) -> str:
+    if os.path.isabs(meta_path) and os.path.exists(meta_path):
+        return meta_path
+    # Try as given (relative to CWD)
+    if os.path.exists(meta_path):
+        return meta_path
+    # Compute repo root from this file: deepcompressor/app/diffusion/dataset/data/__init__.py → repo root
+    prefix = os.path.dirname(__file__)
+    repo_root = os.path.abspath(os.path.join(prefix, "../../../../../"))
+    # Candidates to probe
+    candidates = [
+        os.path.join(os.getcwd(), meta_path),
+        os.path.join(repo_root, meta_path),
+        os.path.join(repo_root, "examples/diffusion", meta_path),
+    ]
+    for cand in candidates:
+        if os.path.exists(cand):
+            return cand
+    return meta_path  # let open(...) raise a clear error
+
+
 def load_dataset_yaml(meta_path: str, max_dataset_size: int = -1, repeat: int = 4) -> dict:
+    meta_path = _resolve_yaml_path(meta_path)
     meta = yaml.safe_load(open(meta_path, "r"))
     names = list(meta.keys())
     if max_dataset_size > 0:
