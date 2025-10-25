@@ -350,6 +350,10 @@ class DiffusionPipelineConfig:
             pipeline = FluxControlPipeline.from_pretrained(path, torch_dtype=dtype)
         elif name == "flux.1-fill-dev":
             pipeline = FluxFillPipeline.from_pretrained(path, torch_dtype=dtype)
+        elif name.startswith("wan"):
+            # Wan uses a custom pipeline class ("WanPipeline"), so AutoPipeline cannot resolve it.
+            # Load directly and allow remote code to define the pipeline.
+            pipeline = DiffusionPipeline.from_pretrained(path, torch_dtype=dtype, trust_remote_code=True)
         elif name.startswith("sana-"):
             if dtype == torch.bfloat16:
                 pipeline = SanaPipeline.from_pretrained(path, variant="bf16", torch_dtype=dtype, use_safetensors=True)
@@ -358,6 +362,7 @@ class DiffusionPipelineConfig:
             else:
                 pipeline = SanaPipeline.from_pretrained(path, torch_dtype=dtype)
         else:
+            # Fallback to auto pipeline for standard models
             pipeline = AutoPipelineForText2Image.from_pretrained(path, torch_dtype=dtype)
         pipeline = pipeline.to(device)
         model = pipeline.unet if hasattr(pipeline, "unet") else pipeline.transformer
