@@ -95,11 +95,10 @@ DIT_BLOCK_CLS = tp.Union[
     FluxSingleTransformerBlock,
     FluxTransformerBlock,
     SanaTransformerBlock,
+    WanTransformerBlock_FV,
+    WanTransformerBlockVSA_FV,
+    WanTransformerBlock_HF,
 ]
-# Extend with FastVideo Wan blocks if present
-DIT_BLOCK_CLS = tp.Union[DIT_BLOCK_CLS, WanTransformerBlock_FV]
-DIT_BLOCK_CLS = tp.Union[DIT_BLOCK_CLS, WanTransformerBlockVSA_FV]
-DIT_BLOCK_CLS = tp.Union[DIT_BLOCK_CLS, WanTransformerBlock_HF]
 
 UNET_BLOCK_CLS = tp.Union[
     DownBlock2D,
