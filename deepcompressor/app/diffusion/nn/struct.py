@@ -36,6 +36,13 @@ from diffusers.models.transformers.transformer_flux import (
     FluxTransformerBlock,
 )
 from diffusers.models.transformers.transformer_sd3 import SD3Transformer2DModel
+# Optional Wan imports (Diffusers Wan)
+try:
+    from diffusers.models.transformers.transformer_wan import WanTransformer3DModel as WanTransformer3DModel_DF
+    from diffusers.pipelines.wan.pipeline_wan import WanPipeline as WanPipeline_DF
+except Exception:
+    WanTransformer3DModel_DF = None
+    WanPipeline_DF = None
 from diffusers.models.unets.unet_2d import UNet2DModel
 from diffusers.models.unets.unet_2d_blocks import (
     CrossAttnDownBlock2D,
@@ -94,25 +101,47 @@ UNET_BLOCK_CLS = tp.Union[
     UpBlock2D,
     CrossAttnUpBlock2D,
 ]
-DIT_CLS = tp.Union[
-    Transformer2DModel,
-    PixArtTransformer2DModel,
-    SD3Transformer2DModel,
-    FluxTransformer2DModel,
-    SanaTransformer2DModel,
-]
+if WanTransformer3DModel_DF is not None:
+    DIT_CLS = tp.Union[
+        Transformer2DModel,
+        PixArtTransformer2DModel,
+        SD3Transformer2DModel,
+        FluxTransformer2DModel,
+        SanaTransformer2DModel,
+        WanTransformer3DModel_DF,
+    ]
+else:
+    DIT_CLS = tp.Union[
+        Transformer2DModel,
+        PixArtTransformer2DModel,
+        SD3Transformer2DModel,
+        FluxTransformer2DModel,
+        SanaTransformer2DModel,
+    ]
 UNET_CLS = tp.Union[UNet2DModel, UNet2DConditionModel]
 MODEL_CLS = tp.Union[DIT_CLS, UNET_CLS]
 UNET_PIPELINE_CLS = tp.Union[StableDiffusionPipeline, StableDiffusionXLPipeline]
-DIT_PIPELINE_CLS = tp.Union[
-    StableDiffusion3Pipeline,
-    PixArtAlphaPipeline,
-    PixArtSigmaPipeline,
-    FluxPipeline,
-    FluxControlPipeline,
-    FluxFillPipeline,
-    SanaPipeline,
-]
+if WanPipeline_DF is not None:
+    DIT_PIPELINE_CLS = tp.Union[
+        StableDiffusion3Pipeline,
+        PixArtAlphaPipeline,
+        PixArtSigmaPipeline,
+        FluxPipeline,
+        FluxControlPipeline,
+        FluxFillPipeline,
+        SanaPipeline,
+        WanPipeline_DF,
+    ]
+else:
+    DIT_PIPELINE_CLS = tp.Union[
+        StableDiffusion3Pipeline,
+        PixArtAlphaPipeline,
+        PixArtSigmaPipeline,
+        FluxPipeline,
+        FluxControlPipeline,
+        FluxFillPipeline,
+        SanaPipeline,
+    ]
 PIPELINE_CLS = tp.Union[UNET_PIPELINE_CLS, DIT_PIPELINE_CLS]
 
 
@@ -1705,6 +1734,35 @@ class DiTStruct(DiffusionModelStruct, DiffusionTransformerStruct):
     ) -> "DiTStruct":
         if isinstance(module, DIT_PIPELINE_CLS):
             module = module.transformer
+        if WanTransformer3DModel_DF is not None and isinstance(module, WanTransformer3DModel_DF):
+            # Wan (Diffusers) 3D Transformer mapping
+            input_embed, input_embed_rname = module.patch_embedding, "patch_embedding"
+            # Wan bundles time/text inside condition_embedder
+            time_embed, time_embed_rname = module.condition_embedder, "condition_embedder"
+            text_embed, text_embed_rname = module.condition_embedder, "condition_embedder"
+            norm_out, norm_out_rname = module.norm_out, "norm_out"
+            proj_out, proj_out_rname = module.proj_out, "proj_out"
+            transformer_blocks, transformer_blocks_rname = module.blocks, "blocks"
+            return DiTStruct(
+                module=module,
+                parent=parent,
+                fname=fname,
+                idx=idx,
+                rname=rname,
+                rkey=rkey,
+                input_embed=input_embed,
+                time_embed=time_embed,
+                text_embed=text_embed,
+                transformer_blocks=transformer_blocks,
+                norm_out=norm_out,
+                proj_out=proj_out,
+                input_embed_rname=input_embed_rname,
+                time_embed_rname=time_embed_rname,
+                text_embed_rname=text_embed_rname,
+                norm_out_rname=norm_out_rname,
+                proj_out_rname=proj_out_rname,
+                transformer_blocks_rname=transformer_blocks_rname,
+            )
         if isinstance(module, FluxTransformer2DModel):
             return FluxStruct.construct(module, parent=parent, fname=fname, rname=rname, rkey=rkey, idx=idx, **kwargs)
         else:

@@ -367,7 +367,8 @@ class DiffusionPipelineConfig:
         pipeline = pipeline.to(device)
         model = pipeline.unet if hasattr(pipeline, "unet") else pipeline.transformer
         replace_fused_linear_with_concat_linear(model)
-        replace_up_block_conv_with_concat_conv(model)
+        if hasattr(pipeline, "unet"):
+            replace_up_block_conv_with_concat_conv(pipeline.unet)
         if shift_activations:
             shift_input_activations(model)
         return pipeline
