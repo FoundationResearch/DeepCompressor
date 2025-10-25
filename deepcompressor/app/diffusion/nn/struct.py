@@ -42,6 +42,9 @@ from fastvideo.models.dits.wanvideo import (
     WanTransformerBlock as WanTransformerBlock_FV,
     WanTransformerBlock_VSA as WanTransformerBlockVSA_FV,
 )
+from diffusers.models.transformers.transformer_wan import (
+    WanTransformer3DModel as WanTransformer3DModel_HF,
+)
 from diffusers.models.unets.unet_2d import UNet2DModel
 from diffusers.models.unets.unet_2d_blocks import (
     CrossAttnDownBlock2D,
@@ -105,7 +108,7 @@ UNET_BLOCK_CLS = tp.Union[
     UpBlock2D,
     CrossAttnUpBlock2D,
 ]
-if WanTransformer3DModel_FV is not None:
+if WanTransformer3DModel_FV is not None or WanTransformer3DModel_HF is not None:
     DIT_CLS = tp.Union[
         Transformer2DModel,
         PixArtTransformer2DModel,
@@ -113,6 +116,7 @@ if WanTransformer3DModel_FV is not None:
         FluxTransformer2DModel,
         SanaTransformer2DModel,
         WanTransformer3DModel_FV,
+        WanTransformer3DModel_HF,
     ]
 else:
     DIT_CLS = tp.Union[
@@ -149,7 +153,15 @@ class DiffusionModuleStruct(BaseModuleStruct):
             MergedColumnParallelLinear,
             QKVParallelLinear,
         )
-        linear_like_types = (nn.Linear, nn.Conv2d, ReplicatedLinear, ColumnParallelLinear, RowParallelLinear, MergedColumnParallelLinear, QKVParallelLinear)
+        linear_like_types = (
+            nn.Linear,
+            nn.Conv2d,
+            ReplicatedLinear,
+            ColumnParallelLinear,
+            RowParallelLinear,
+            MergedColumnParallelLinear,
+            QKVParallelLinear,
+        )
 
         if isinstance(self.module, linear_like_types):
             yield self.key, self.name, self.module, self.parent, self.fname
@@ -1730,6 +1742,35 @@ class DiTStruct(DiffusionModelStruct, DiffusionTransformerStruct):
             # Wan (Diffusers) 3D Transformer mapping
             input_embed, input_embed_rname = module.patch_embedding, "patch_embedding"
             # FastVideo bundles time/text inside condition_embedder; keep the module for traversal
+            time_embed, time_embed_rname = module.condition_embedder, "condition_embedder"
+            text_embed, text_embed_rname = module.condition_embedder, "condition_embedder"
+            norm_out, norm_out_rname = module.norm_out, "norm_out"
+            proj_out, proj_out_rname = module.proj_out, "proj_out"
+            transformer_blocks, transformer_blocks_rname = module.blocks, "blocks"
+            return DiTStruct(
+                module=module,
+                parent=parent,
+                fname=fname,
+                idx=idx,
+                rname=rname,
+                rkey=rkey,
+                input_embed=input_embed,
+                time_embed=time_embed,
+                text_embed=text_embed,
+                transformer_blocks=transformer_blocks,
+                norm_out=norm_out,
+                proj_out=proj_out,
+                input_embed_rname=input_embed_rname,
+                time_embed_rname=time_embed_rname,
+                text_embed_rname=text_embed_rname,
+                norm_out_rname=norm_out_rname,
+                proj_out_rname=proj_out_rname,
+                transformer_blocks_rname=transformer_blocks_rname,
+            )
+        elif isinstance(module, WanTransformer3DModel_HF):
+            # Wan (Diffusers official) 3D Transformer mapping
+            input_embed, input_embed_rname = module.patch_embedding, "patch_embedding"
+            # Wan bundles conditioning in condition_embedder as well
             time_embed, time_embed_rname = module.condition_embedder, "condition_embedder"
             text_embed, text_embed_rname = module.condition_embedder, "condition_embedder"
             norm_out, norm_out_rname = module.norm_out, "norm_out"

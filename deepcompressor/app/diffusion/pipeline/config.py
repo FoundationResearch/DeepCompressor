@@ -365,12 +365,15 @@ class DiffusionPipelineConfig:
             # Fallback to auto pipeline for standard models
             pipeline = AutoPipelineForText2Image.from_pretrained(path, torch_dtype=dtype)
         pipeline = pipeline.to(device)
-        model = pipeline.unet if hasattr(pipeline, "unet") else pipeline.transformer
-        replace_fused_linear_with_concat_linear(model)
-        if hasattr(pipeline, "unet"):
-            replace_up_block_conv_with_concat_conv(pipeline.unet)
-        if shift_activations:
-            shift_input_activations(model)
+        model = pipeline.unet if hasattr(pipeline, "unet") else getattr(pipeline, "transformer", None)
+        if model is None and hasattr(pipeline, "model"):
+            model = getattr(pipeline, "model")
+        if model is not None:
+            replace_fused_linear_with_concat_linear(model)
+            if hasattr(pipeline, "unet") and getattr(pipeline, "unet", None) is not None:
+                replace_up_block_conv_with_concat_conv(pipeline.unet)
+            if shift_activations:
+                shift_input_activations(model)
         return pipeline
 
     @staticmethod
