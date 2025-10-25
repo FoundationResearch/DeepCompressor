@@ -454,6 +454,95 @@ class DiffusionAttentionStruct(AttentionStruct):
 
 
 @dataclass(kw_only=True)
+class DiffusionWanAttentionStruct(AttentionStruct):
+    module: nn.Module = field(repr=False, kw_only=False)
+    parent: tp.Optional["DiffusionTransformerBlockStruct"] = field(repr=False)
+
+    @staticmethod
+    def _default_construct(
+        module: nn.Module,
+        /,
+        parent: tp.Optional["DiffusionTransformerBlockStruct"] = None,
+        fname: str = "",
+        rname: str = "",
+        rkey: str = "",
+        idx: int = 0,
+        **kwargs,
+    ) -> "DiffusionWanAttentionStruct":
+        # module is the Wan transformer block; extract shared qkv/out projections
+        to_q = getattr(module, "to_q")
+        to_k = getattr(module, "to_k")
+        to_v = getattr(module, "to_v")
+        to_out = getattr(module, "to_out")
+        assert to_q is not None and to_k is not None and to_v is not None and to_out is not None
+        # Self (idx==0): use q,k,v; Cross (idx==1): use add_k, add_v with q from to_q
+        if idx == 0:
+            q_proj, k_proj, v_proj = to_q, to_k, to_v
+            add_q_proj = add_k_proj = add_v_proj = add_o_proj = None
+            q_proj_rname, k_proj_rname, v_proj_rname = "to_q", "to_k", "to_v"
+            add_q_proj_rname = add_k_proj_rname = add_v_proj_rname = add_o_proj_rname = ""
+        else:
+            q_proj = to_q
+            k_proj = v_proj = None
+            add_q_proj = None
+            add_k_proj, add_v_proj = to_k, to_v
+            add_o_proj = None
+            q_proj_rname, k_proj_rname, v_proj_rname = "to_q", "", ""
+            add_q_proj_rname, add_k_proj_rname, add_v_proj_rname, add_o_proj_rname = "", "to_k", "to_v", ""
+        # Output projection (ReplicatedLinear acceptable)
+        o_proj = to_out
+        o_proj_rname = "to_out"
+        # Config inference
+        hidden_size = getattr(module, "hidden_dim", None) or getattr(module, "hidden_size", None)
+        num_heads = getattr(module, "num_attention_heads", None)
+        assert isinstance(num_heads, int) and isinstance(hidden_size, int)
+        inner_size = q_proj.weight.shape[0]
+        head_dim = hidden_size // num_heads
+        num_kv_heads = num_heads  # Wan uses same heads for k/v
+        config = AttentionConfigStruct(
+            hidden_size=hidden_size,
+            add_hidden_size=hidden_size if idx == 1 else 0,
+            inner_size=inner_size,
+            num_query_heads=num_heads,
+            num_key_value_heads=num_kv_heads,
+            with_qk_norm=hasattr(module, "norm_q") and getattr(module, "norm_q") is not None,
+            with_rope=True,
+            linear_attn=False,
+        )
+        return DiffusionWanAttentionStruct(
+            module=module,
+            parent=parent,
+            fname=fname,
+            idx=idx,
+            rname=rname,
+            rkey=rkey,
+            config=config,
+            q_proj=q_proj,
+            k_proj=k_proj,
+            v_proj=v_proj,
+            o_proj=o_proj,
+            add_q_proj=add_q_proj,
+            add_k_proj=add_k_proj,
+            add_v_proj=add_v_proj,
+            add_o_proj=add_o_proj,
+            q=None,
+            k=None,
+            v=None,
+            q_proj_rname=q_proj_rname,
+            k_proj_rname=k_proj_rname,
+            v_proj_rname=v_proj_rname,
+            o_proj_rname=o_proj_rname,
+            add_q_proj_rname=add_q_proj_rname,
+            add_k_proj_rname=add_k_proj_rname,
+            add_v_proj_rname=add_v_proj_rname,
+            add_o_proj_rname=add_o_proj_rname,
+            q_rname="",
+            k_rname="",
+            v_rname="",
+        )
+
+
+@dataclass(kw_only=True)
 class DiffusionFeedForwardStruct(FeedForwardStruct):
     module: FeedForward = field(repr=False, kw_only=False)
     """the module of FeedForward"""
