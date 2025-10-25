@@ -172,6 +172,20 @@ class DiffusionCalibCacheLoader(BaseCalibCacheLoader):
                 ),
                 outputs=TensorCache(channels_dim=-1, reshape=LinearReshapeFn()),
             )
+        # Support Wan custom blocks that look like transformer blocks with temb and hidden_states
+        from fastvideo.models.dits.wanvideo import WanTransformerBlock, WanTransformerBlock_VSA
+        wan_block_types = (WanTransformerBlock, WanTransformerBlock_VSA)
+        if wan_block_types and isinstance(module, wan_block_types):
+            return IOTensorsCache(
+                inputs=TensorsCache(
+                    OrderedDict(
+                        hidden_states=TensorCache(channels_dim=-1, reshape=LinearReshapeFn()),
+                        temb=TensorCache(channels_dim=1, reshape=LinearReshapeFn()),
+                        encoder_hidden_states=TensorCache(channels_dim=-1, reshape=LinearReshapeFn()),
+                    )
+                ),
+                outputs=TensorCache(channels_dim=-1, reshape=LinearReshapeFn()),
+            )
         elif isinstance(module, Attention):
             return IOTensorsCache(
                 inputs=TensorsCache(

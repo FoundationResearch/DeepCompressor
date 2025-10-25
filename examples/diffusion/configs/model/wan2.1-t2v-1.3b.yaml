@@ -1,0 +1,43 @@
+pipeline:
+  name: wan2.1-t2v-1.3b
+  path: Wan-AI/Wan2.1-T2V-1.3B-Diffusers
+  dtype: torch.bfloat16
+eval:
+  num_steps: 10
+  guidance_scale: 0
+  protocol: fmeuler{num_steps}-g{guidance_scale}
+quant:
+  calib:
+    batch_size: 16
+  wgts:
+    calib_range:
+      element_batch_size: 64
+      sample_batch_size: 32
+      element_size: 512
+      sample_size: -1
+    low_rank:
+      sample_batch_size: 32
+      sample_size: -1
+    skips:
+    - embed
+    - transformer_proj_in
+    - transformer_proj_out
+    - transformer_norm
+    - transformer_add_norm
+  ipts:
+    calib_range:
+      element_batch_size: 64
+      sample_batch_size: 32
+      element_size: 512
+      sample_size: -1
+    skips:
+    - embed
+    - transformer_proj_in
+    - transformer_proj_out
+    - transformer_norm
+    - transformer_add_norm
+  smooth:
+    proj:
+      sample_batch_size: 32
+      sample_size: -1
+

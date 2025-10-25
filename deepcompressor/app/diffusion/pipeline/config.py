@@ -368,6 +368,21 @@ class DiffusionPipelineConfig:
         return pipeline
 
     @staticmethod
+    def register_wan_defaults():
+        # Minimal factory for Wan diffusers checkpoints
+        def _build_wan(name: str, path: str, dtype: str | torch.dtype, device: str | torch.device, shift_activations: bool):
+            pipe = AutoPipelineForText2Image.from_pretrained(path, torch_dtype=dtype)
+            pipe = pipe.to(device)
+            model = getattr(pipe, "transformer", None)
+            if model is not None:
+                replace_fused_linear_with_concat_linear(model)
+                replace_up_block_conv_with_concat_conv(model)
+                if shift_activations:
+                    shift_input_activations(model)
+            return pipe
+        DiffusionPipelineConfig.register_pipeline_factory(("wan2.1-t2v-1.3b", "wan2.1-t2v"), _build_wan, overwrite=True)
+
+    @staticmethod
     def _default_extract_text_encoders(
         pipeline: DiffusionPipeline, supported: tuple[type[PreTrainedModel], ...]
     ) -> list[tuple[str, PreTrainedModel, PreTrainedTokenizer]]:

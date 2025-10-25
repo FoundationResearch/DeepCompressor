@@ -579,16 +579,35 @@ def smooth_diffusion_layer(
                         block_kwargs=layer_kwargs,
                     )
                 tools.logging.Formatter.indent_dec()
-        elif isinstance(module, (nn.Linear, nn.Conv2d)):
-            smooth_cache = smooth_diffusion_module(
-                module_key=module_key,
-                module_name=module_name,
-                module=module,
-                config=config,
-                smooth_cache=smooth_cache,
-                layer_cache=layer_cache,
-            )
         else:
+            # Support FastVideo linear-like modules
+            linear_like_types: tuple[type, ...]
+            from fastvideo.layers.linear import (
+                ReplicatedLinear,
+                ColumnParallelLinear,
+                RowParallelLinear,
+                MergedColumnParallelLinear,
+                QKVParallelLinear,
+            )
+            linear_like_types = (
+                nn.Linear,
+                nn.Conv2d,
+                ReplicatedLinear,
+                ColumnParallelLinear,
+                RowParallelLinear,
+                MergedColumnParallelLinear,
+                QKVParallelLinear,
+            )
+            if isinstance(module, linear_like_types):
+                smooth_cache = smooth_diffusion_module(
+                    module_key=module_key,
+                    module_name=module_name,
+                    module=module,  # type: ignore[arg-type]
+                    config=config,
+                    smooth_cache=smooth_cache,
+                    layer_cache=layer_cache,
+                )
+                continue
             needs_quant = config.enabled_wgts and config.wgts.is_enabled_for(module_key)
             needs_quant = needs_quant or (config.enabled_ipts and config.ipts.is_enabled_for(module_key))
             if needs_quant and config.smooth.enabled_proj and config.smooth.proj.is_enabled_for(module_key):

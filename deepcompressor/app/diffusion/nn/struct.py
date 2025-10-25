@@ -119,11 +119,22 @@ PIPELINE_CLS = tp.Union[UNET_PIPELINE_CLS, DIT_PIPELINE_CLS]
 @dataclass(kw_only=True)
 class DiffusionModuleStruct(BaseModuleStruct):
     def named_key_modules(self) -> tp.Generator[tuple[str, str, nn.Module, BaseModuleStruct, str], None, None]:
-        if isinstance(self.module, (nn.Linear, nn.Conv2d)):
+        # Treat FastVideo linear-like modules as linear if available
+        linear_like_types: tuple[type, ...]
+        from fastvideo.layers.linear import (
+            ReplicatedLinear,
+            ColumnParallelLinear,
+            RowParallelLinear,
+            MergedColumnParallelLinear,
+            QKVParallelLinear,
+        )
+        linear_like_types = (nn.Linear, nn.Conv2d, ReplicatedLinear, ColumnParallelLinear, RowParallelLinear, MergedColumnParallelLinear, QKVParallelLinear)
+
+        if isinstance(self.module, linear_like_types):
             yield self.key, self.name, self.module, self.parent, self.fname
         else:
             for name, module in self.module.named_modules():
-                if name and isinstance(module, (nn.Linear, nn.Conv2d)):
+                if name and isinstance(module, linear_like_types):
                     module_name = join_name(self.name, name)
                     field_name = join_name(self.fname, name)
                     yield self.key, module_name, module, self.parent, field_name
