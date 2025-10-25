@@ -44,6 +44,7 @@ from fastvideo.models.dits.wanvideo import (
 )
 from diffusers.models.transformers.transformer_wan import (
     WanTransformer3DModel as WanTransformer3DModel_HF,
+    WanTransformerBlock as WanTransformerBlock_HF,
 )
 from diffusers.models.unets.unet_2d import UNet2DModel
 from diffusers.models.unets.unet_2d_blocks import (
@@ -96,10 +97,10 @@ DIT_BLOCK_CLS = tp.Union[
     SanaTransformerBlock,
 ]
 # Extend with FastVideo Wan blocks if present
-if 'WanTransformerBlock_FV' in globals() and WanTransformerBlock_FV is not None:
-    DIT_BLOCK_CLS = tp.Union[DIT_BLOCK_CLS, WanTransformerBlock_FV]
-if 'WanTransformerBlockVSA_FV' in globals() and WanTransformerBlockVSA_FV is not None:
-    DIT_BLOCK_CLS = tp.Union[DIT_BLOCK_CLS, WanTransformerBlockVSA_FV]
+DIT_BLOCK_CLS = tp.Union[DIT_BLOCK_CLS, WanTransformerBlock_FV]
+DIT_BLOCK_CLS = tp.Union[DIT_BLOCK_CLS, WanTransformerBlockVSA_FV]
+DIT_BLOCK_CLS = tp.Union[DIT_BLOCK_CLS, WanTransformerBlock_HF]
+
 UNET_BLOCK_CLS = tp.Union[
     DownBlock2D,
     CrossAttnDownBlock2D,
@@ -108,8 +109,7 @@ UNET_BLOCK_CLS = tp.Union[
     UpBlock2D,
     CrossAttnUpBlock2D,
 ]
-if WanTransformer3DModel_FV is not None or WanTransformer3DModel_HF is not None:
-    DIT_CLS = tp.Union[
+DIT_CLS = tp.Union[
         Transformer2DModel,
         PixArtTransformer2DModel,
         SD3Transformer2DModel,
@@ -117,14 +117,6 @@ if WanTransformer3DModel_FV is not None or WanTransformer3DModel_HF is not None:
         SanaTransformer2DModel,
         WanTransformer3DModel_FV,
         WanTransformer3DModel_HF,
-    ]
-else:
-    DIT_CLS = tp.Union[
-        Transformer2DModel,
-        PixArtTransformer2DModel,
-        SD3Transformer2DModel,
-        FluxTransformer2DModel,
-        SanaTransformer2DModel,
     ]
 UNET_CLS = tp.Union[UNet2DModel, UNet2DConditionModel]
 MODEL_CLS = tp.Union[DIT_CLS, UNET_CLS]
