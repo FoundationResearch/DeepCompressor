@@ -13,6 +13,7 @@ from fastvideo.models.dits.wanvideo import (
 )
 
 from ...utils.common import join_name
+from ...utils import tools
 from .base import BaseModuleStruct
 
 __all__ = [
@@ -710,6 +711,13 @@ class TransformerBlockStruct(BaseModuleStruct):
         else:
             # Some models (e.g., Wan) include cross-attention without additional norms; allow it.
             pass
+
+        # Informative logging for non-self attention modules
+        if tools is not None:
+            logger = tools.logging.getLogger(__name__)
+            for i, attn in enumerate(self.attn_structs):
+                if not attn.is_self_attn():
+                    logger.info(f"Non-self attention detected: {self.attn_names[i]}")
 
     def named_key_modules(self) -> tp.Generator[tp.Tuple[str, str, nn.Module, BaseModuleStruct, str], None, None]:
         for attn_struct in self.attn_structs:
