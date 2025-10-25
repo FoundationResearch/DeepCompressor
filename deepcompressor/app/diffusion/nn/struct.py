@@ -740,23 +740,23 @@ class DiffusionTransformerBlockStruct(TransformerBlockStruct, DiffusionBlockStru
             ffn, ffn_rname = module.ff, "ff"
             pre_add_ffn_norm, pre_add_ffn_norm_rname = module.norm2_context, "norm2_context"
             add_ffn, add_ffn_rname = module.ff_context, "ff_context"
-        elif isinstance(module, WanTransformerBlock_HF) or isinstance(module, WanTransformerBlock_FV):
+        elif isinstance(module, (WanTransformerBlock_HF, WanTransformerBlock_FV, WanTransformerBlockVSA_FV)):
             # Diffusers/FastVideo Wan block: sequential layout without norm_type field
             parallel = False
             norm_type = add_norm_type = "layer_norm"
             pre_attn_norms, pre_attn_norm_rnames = [], []
             attns, attn_rnames = [], []
             pre_attn_add_norms, pre_attn_add_norm_rnames = [], []
-            # expected attributes: norm1, attn1, (optional) norm2, (optional) attn2, ffn
-            if hasattr(module, "norm1") and module.norm1 is not None:
-                pre_attn_norms.append(module.norm1)
-                pre_attn_norm_rnames.append("norm1")
-            if hasattr(module, "attn1") and module.attn1 is not None:
-                attns.append(module.attn1)
-                attn_rnames.append("attn1")
-            # Wan block may not have explicit norm2/attn2; guard if present
-            if hasattr(module, "attn2") and module.attn2 is not None:
-                if hasattr(module, "norm2") and module.norm2 is not None:
+            # required: norm1, attn1
+            assert module.norm1 is not None, "Wan block missing norm1"
+            assert getattr(module, "attn1", None) is not None, "Wan block missing attn1"
+            pre_attn_norms.append(module.norm1)
+            pre_attn_norm_rnames.append("norm1")
+            attns.append(module.attn1)
+            attn_rnames.append("attn1")
+            # optional: norm2 + attn2
+            if getattr(module, "attn2", None) is not None:
+                if getattr(module, "norm2", None) is not None:
                     pre_attn_norms.append(module.norm2)
                     pre_attn_norm_rnames.append("norm2")
                 else:
@@ -765,10 +765,11 @@ class DiffusionTransformerBlockStruct(TransformerBlockStruct, DiffusionBlockStru
                 attns.append(module.attn2)
                 attn_rnames.append("attn2")
             # FFN
+            ffn = getattr(module, "ffn", None)
+            assert ffn is not None, "Wan block missing ffn"
             pre_ffn_norm = getattr(module, "norm2", None)
             pre_ffn_norm_rname = "norm2" if pre_ffn_norm is not None else ""
-            ffn = getattr(module, "ffn", None)
-            ffn_rname = "ffn" if ffn is not None else ""
+            ffn_rname = "ffn"
             pre_add_ffn_norm, pre_add_ffn_norm_rname, add_ffn, add_ffn_rname = None, "", None, ""
         else:
             raise NotImplementedError(f"Unsupported module type: {type(module)}")

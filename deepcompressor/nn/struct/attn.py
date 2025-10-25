@@ -6,6 +6,11 @@ from abc import abstractmethod
 from dataclasses import dataclass, field
 
 import torch.nn as nn
+from diffusers.models.transformers.transformer_wan import WanAttention as WanAttention_HF
+from fastvideo.models.dits.wanvideo import (
+    WanT2VCrossAttention as WanAttention_FV,
+    WanI2VCrossAttention as WanI2VAttention_FV,
+)
 
 from ...utils.common import join_name
 from .base import BaseModuleStruct
@@ -668,12 +673,25 @@ class TransformerBlockStruct(BaseModuleStruct):
         self.pre_add_ffn_norm_name = join_name(self.name, self.pre_add_ffn_norm_rname)
         self.add_ffn_name = join_name(self.name, self.add_ffn_rname)
         self.post_add_ffn_norm_name = join_name(self.name, self.post_add_ffn_norm_rname)
-        self.attn_structs = [
-            self.attn_struct_cls.construct(
-                attn, parent=self, fname="attn", rname=self.attn_rnames[idx], rkey=self.attn_rkey, idx=idx
+        # Map attention modules to appropriate struct types
+        def _attn_struct_for(attn_mod: nn.Module) -> type[AttentionStruct]:
+            if isinstance(attn_mod, WanAttention_HF):
+                # WanAttention in Diffusers is self-attention inside block; but it has cross-branch in separate attn2
+                return SelfAttentionStruct
+            if isinstance(attn_mod, (WanAttention_FV,)):
+                # T2V cross attention (attn2) takes added kv only
+                return CrossAttentionStruct
+            if isinstance(attn_mod, (WanI2VAttention_FV,)):
+                # I2V cross attention also acts as cross attention
+                return CrossAttentionStruct
+            return self.attn_struct_cls
+
+        self.attn_structs = []
+        for idx, attn in enumerate(self.attns):
+            struct_cls = _attn_struct_for(attn)
+            self.attn_structs.append(
+                struct_cls.construct(attn, parent=self, fname="attn", rname=self.attn_rnames[idx], rkey=self.attn_rkey, idx=idx)
             )
-            for idx, attn in enumerate(self.attns)
-        ]
         if self.ffn is not None:
             self.ffn_struct = self.ffn_struct_cls.construct(
                 self.ffn, parent=self, fname="ffn", rname=self.ffn_rname, rkey=self.ffn_rkey
