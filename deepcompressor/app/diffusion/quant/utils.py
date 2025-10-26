@@ -3,7 +3,8 @@ import typing as tp
 import torch
 import torch.nn as nn
 
-from ..nn.struct import DiffusionAttentionStruct, DiffusionFeedForwardStruct, DiffusionModelStruct
+from ..nn.struct import DiffusionFeedForwardStruct, DiffusionModelStruct
+from deepcompressor.nn.struct.attn import AttentionStruct
 from .config import DiffusionQuantConfig
 
 __all__ = ["get_needs_inputs_fn", "get_needs_outputs_fn", "wrap_joint_attn"]
@@ -46,7 +47,7 @@ def get_needs_inputs_fn(
         if (config.enabled_wgts and config.wgts.is_enabled_for(module_key)) or (
             config.enabled_ipts and config.ipts.is_enabled_for(module_key)
         ):
-            if isinstance(parent, DiffusionAttentionStruct):
+            if isinstance(parent, AttentionStruct):
                 if field_name.endswith("o_proj"):
                     needs_inputs_names.add(module_name)
                 elif field_name in ("q_proj", "k_proj", "v_proj"):

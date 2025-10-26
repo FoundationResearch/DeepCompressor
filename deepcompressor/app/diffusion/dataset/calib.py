@@ -196,8 +196,25 @@ class DiffusionCalibCacheLoader(BaseCalibCacheLoader):
                 ),
                 outputs=TensorCache(channels_dim=None, reshape=None),
             )
+        # Wan attention (HF/FastVideo)
         else:
-            return super()._init_cache(name, module)
+            from diffusers.models.transformers.transformer_wan import WanAttention as WanAttention_HF
+            from fastvideo.models.dits.wanvideo import (
+                WanT2VCrossAttention as WanAttention_FV,
+                WanI2VCrossAttention as WanI2VAttention_FV,
+            )
+            if isinstance(module, (WanAttention_HF, WanAttention_FV, WanI2VAttention_FV)):
+                return IOTensorsCache(
+                    inputs=TensorsCache(
+                        OrderedDict(
+                            hidden_states=TensorCache(channels_dim=None, reshape=None),
+                            encoder_hidden_states=TensorCache(channels_dim=None, reshape=None),
+                        ),
+                    ),
+                    outputs=TensorCache(channels_dim=None, reshape=None),
+                )
+        # Fallback to base behavior
+        return super()._init_cache(name, module)
 
     def iter_samples(self) -> tp.Generator[ModuleForwardInput, None, None]:
         dataloader = self.dataset.build_loader(
