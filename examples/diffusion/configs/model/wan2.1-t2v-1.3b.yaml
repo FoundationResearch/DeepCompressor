@@ -8,6 +8,7 @@ eval:
   num_steps: 50
   guidance_scale: 6.0
   protocol: fmeuler{num_steps}-g{guidance_scale}
+  num_samples: 4
 quant:
   calib:
     batch_size: 16

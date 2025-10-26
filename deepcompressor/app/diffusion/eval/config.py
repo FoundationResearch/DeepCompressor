@@ -7,6 +7,8 @@ import typing as tp
 from dataclasses import dataclass, field
 
 import datasets
+import numpy as np
+from PIL import Image
 import diffusers
 import omniconfig
 import torch
@@ -183,7 +185,56 @@ class DiffusionEvalConfig:
                     pipeline_kwargs["control_image"] = controls
 
             output = pipeline(prompts, generator=generators, **pipeline_kwargs)
-            images = output.images
+
+            # Normalize different pipeline outputs (image vs video) to a list of PIL Images
+            if hasattr(output, "images"):
+                images = output.images
+            else:
+                samples = None
+                if hasattr(output, "frames"):
+                    samples = output.frames
+                elif hasattr(output, "videos"):
+                    samples = output.videos
+                elif isinstance(output, dict):
+                    samples = (
+                        output.get("images")
+                        or output.get("frames")
+                        or output.get("videos")
+                    )
+                if samples is None:
+                    raise AttributeError("Unsupported pipeline output: no images/frames/videos field found")
+
+                # Convert to list of PIL by taking the first frame per sample if it's a video
+                images = []
+                if isinstance(samples, list):
+                    # list of PIL or list of list-of-PIL
+                    for s in samples:
+                        if isinstance(s, Image.Image):
+                            images.append(s)
+                        elif isinstance(s, (list, tuple)) and len(s) > 0:
+                            # assume list of frames
+                            frame0 = s[0]
+                            images.append(frame0 if isinstance(frame0, Image.Image) else Image.fromarray(np.asarray(frame0)))
+                        else:
+                            images.append(Image.fromarray(np.asarray(s)))
+                else:
+                    # numpy or torch tensor
+                    arr = samples
+                    if torch.is_tensor(arr):
+                        arr = arr.detach().cpu()
+                        if arr.dtype.is_floating_point:
+                            arr = (arr.clamp(0, 1) * 255).to(torch.uint8)
+                        arr = arr.numpy()
+                    # expected shapes: (B, T, H, W, C) or (B, H, W, C)
+                    if arr.ndim == 5:
+                        arr = arr[:, 0]  # take first frame
+                    assert arr.ndim == 4 and arr.shape[-1] in (1, 3, 4)
+                    for i in range(arr.shape[0]):
+                        img = arr[i]
+                        if img.shape[-1] == 1:
+                            img = img[..., 0]
+                        images.append(Image.fromarray(img))
+
             for filename, image in zip(filenames, images, strict=True):
                 image.save(os.path.join(dirpath, f"{filename}.png"))
 
