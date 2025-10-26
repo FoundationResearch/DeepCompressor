@@ -1,0 +1,4 @@
+quant:
+  calib:
+    num_samples: 4
+    path: datasets/{dtype}/{model}/{protocol}/qdiff/s4
