@@ -104,7 +104,12 @@ def smooth_diffusion_qkv_proj(
     if needs_quant and config.smooth.enabled_proj and config.smooth.proj.is_enabled_for(module_key):
         logger.debug("- %s add_qkv_proj", attn.name)
         prevs = None
-        pre_attn_add_norm = attn.parent.pre_attn_add_norms[attn.idx]
+        # Guard against models (e.g., Wan) that may not provide pre_attn_add_norms per attention
+        pre_attn_add_norm = None
+        if hasattr(attn.parent, "pre_attn_add_norms"):
+            pans = attn.parent.pre_attn_add_norms
+            if isinstance(pans, (list, tuple)) and attn.idx < len(pans):
+                pre_attn_add_norm = pans[attn.idx]
         if isinstance(pre_attn_add_norm, nn.LayerNorm) and config.smooth.proj.fuse_when_possible:
             prevs = pre_attn_add_norm
         cache_key = attn.add_k_proj_name
