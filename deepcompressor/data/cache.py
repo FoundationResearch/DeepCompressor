@@ -114,10 +114,12 @@ class TensorCache:
             `list[torch.Tensor]`:
                 Standardized data.
         """
+        channels_dim = self.channels_dim if self.channels_dim is not None else -1
+        reshape_fn = self.reshape if self.reshape is not None else ReshapeFn()
         if reshape:
-            return [self.reshape(x.view(-1, *x.shape[self.channels_dim :])) for x in self.data]
+            return [reshape_fn(x.view(-1, *x.shape[channels_dim:])) for x in self.data]
         else:
-            return [x.view(-1, *x.shape[self.channels_dim :]) for x in self.data]
+            return [x.view(-1, *x.shape[channels_dim:]) for x in self.data]
 
     def repartition(self, max_batch_size: int, max_size: int, standardize: bool, reshape: bool) -> "TensorCache":
         """Relocate data based on the maximum batch size and size.
@@ -142,6 +144,10 @@ class TensorCache:
         assert all(x.ndim == self.data[0].ndim for x in self.data), "All tensors must have the same #dims."
         assert all(x.shape == self.data[0].shape for x in self.data), "All tensors must have the same shape."
         data, dim, fn = self.data, self.channels_dim, self.reshape
+        if dim is None:
+            dim = -1
+        if fn is None:
+            fn = ReshapeFn()
         if standardize:
             data = [x.view(-1, *x.shape[dim:]) for x in self.data]
             dim = 1

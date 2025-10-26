@@ -105,7 +105,16 @@ class DiffusionConcatCacheAction(ConcatCacheAction):
             cache (`TensorsCache`):
                 Cache.
         """
-        if isinstance(module, Attention):
+        # Normalize Attention inputs (Diffusers + Wan variants)
+        is_attn = isinstance(module, Attention)
+        if not is_attn:
+            from diffusers.models.transformers.transformer_wan import WanAttention as WanAttention_HF
+            from fastvideo.models.dits.wanvideo import (
+                WanT2VCrossAttention as WanAttention_FV,
+                WanI2VCrossAttention as WanI2VAttention_FV,
+            )
+            is_attn = isinstance(module, (WanAttention_HF, WanAttention_FV, WanI2VAttention_FV))
+        if is_attn:
             encoder_hidden_states = tensors.get("encoder_hidden_states", None)
             if encoder_hidden_states is None:
                 tensors.pop("encoder_hidden_states", None)
