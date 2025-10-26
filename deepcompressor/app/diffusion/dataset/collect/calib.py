@@ -74,16 +74,56 @@ def collect(config: DiffusionPtqRunConfig, dataset: datasets.Dataset):
         if hasattr(output, "images"):
             result_images = output.images
         elif hasattr(output, "frames"):
+            import numpy as np
+
+            def _frame_to_pil(frame) -> Image.Image:
+                if isinstance(frame, Image.Image):
+                    return frame
+                if hasattr(frame, "detach"):
+                    frame = frame.detach().cpu().numpy()
+                frame = np.array(frame)
+                # Squeeze trivial dims
+                while frame.ndim > 3 and frame.shape[0] == 1:
+                    frame = frame[0]
+                # If we still have time dimension first, pick first frame
+                if frame.ndim == 4:
+                    # Prefer (F,H,W,C)
+                    if frame.shape[-1] in (1, 3, 4):
+                        frame = frame[0]
+                    else:
+                        # Likely (F,C,H,W)
+                        frame = frame[0].transpose(1, 2, 0)
+                # If CHW -> HWC
+                if frame.ndim == 3 and frame.shape[0] in (1, 3, 4) and frame.shape[-1] not in (1, 3, 4):
+                    frame = frame.transpose(1, 2, 0)
+                # Normalize to uint8
+                if frame.dtype.kind == "f":
+                    # Handle [-1,1] or [0,1]
+                    fmin, fmax = frame.min(), frame.max()
+                    if fmin < 0.0:
+                        frame = (frame + 1.0) * 0.5
+                    frame = np.clip(frame * 255.0, 0, 255).astype(np.uint8)
+                elif frame.dtype != np.uint8:
+                    frame = np.clip(frame, 0, 255).astype(np.uint8)
+                # Ensure last dim is channels of size 1/3/4
+                if frame.ndim == 2:
+                    return Image.fromarray(frame)
+                if frame.ndim == 3 and frame.shape[-1] in (1, 3, 4):
+                    return Image.fromarray(frame.squeeze())
+                # As a last resort, try to reshape a 3-vector pixel
+                if frame.size == 3:
+                    return Image.fromarray(frame.reshape(1, 1, 3))
+                raise TypeError(f"Unsupported frame shape for PIL: {frame.shape}, dtype={frame.dtype}")
+
             videos = output.frames
             result_images = []
             # Take the first frame as thumbnail for saving; caches are collected independently via hooks
             for vid in videos:
-                # vid can be (F,H,W,C) ndarray or list of frames
-                frame0 = vid[0]
-                if isinstance(frame0, Image.Image):
-                    result_images.append(frame0)
+                # vid can be list/ndarray/tensor
+                if isinstance(vid, list) and len(vid) > 0:
+                    result_images.append(_frame_to_pil(vid[0]))
                 else:
-                    result_images.append(Image.fromarray(frame0))
+                    result_images.append(_frame_to_pil(vid))
         else:
             # Some pipelines may return tuple; skip saving samples but still proceed with caches
             result_images = []
