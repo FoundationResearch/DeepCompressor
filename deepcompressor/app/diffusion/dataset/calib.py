@@ -131,6 +131,11 @@ class DiffusionConcatCacheAction(ConcatCacheAction):
                     hidden_states_cache.reshape = AttentionInputReshapeFn(channels_dim)
             else:
                 assert hidden_states_cache.channels_dim == channels_dim
+        # Drop None-valued inputs generically (e.g., Wan attention may pass None for encoder_hidden_states)
+        remove_keys = [k for k, v in tensors.items() if v is None]
+        for k in remove_keys:
+            tensors.pop(k, None)
+            cache.tensors.pop(k, None)
         return super().info(name, module, tensors, cache)
 
 
