@@ -14,6 +14,7 @@ from deepcompressor.nn.patch.lowrank import LowRankBranch
 from deepcompressor.utils import tools
 
 from ..nn.struct import DiffusionAttentionStruct, DiffusionBlockStruct, DiffusionModelStruct, DiffusionModuleStruct
+from deepcompressor.nn.struct.attn import AttentionStruct
 from .config import DiffusionQuantConfig
 from .quantizer import DiffusionActivationQuantizer, DiffusionWeightQuantizer
 from .utils import get_needs_inputs_fn, wrap_joint_attn
@@ -52,7 +53,8 @@ def calibrate_diffusion_block_low_rank_branch(  # noqa: C901
         modules, module_names = [module], [module_name]
         if not config.wgts.low_rank.exclusive:
             if field_name.endswith(("q_proj", "k_proj", "v_proj")):
-                assert isinstance(parent, DiffusionAttentionStruct)
+                # Accept any attention struct (Wan/HF flavors)
+                assert isinstance(parent, AttentionStruct)
                 if parent.is_self_attn():
                     if field_name == "q_proj":
                         modules, module_names = parent.qkv_proj, parent.qkv_proj_names
@@ -73,7 +75,7 @@ def calibrate_diffusion_block_low_rank_branch(  # noqa: C901
                     else:
                         continue
         if field_name.endswith(("q_proj", "k_proj")):
-            assert isinstance(parent, DiffusionAttentionStruct)
+            assert isinstance(parent, AttentionStruct)
             if parent.parent.parallel and parent.idx == 0:
                 eval_module = parent.parent.module
                 eval_name = parent.parent.name
@@ -174,7 +176,7 @@ def update_diffusion_block_weight_quantizer_state_dict(
     tools.logging.Formatter.indent_inc()
     for module_key, module_name, module, parent, field_name in layer.named_key_modules():
         if field_name.endswith(("q_proj", "k_proj")):
-            assert isinstance(parent, DiffusionAttentionStruct)
+            assert isinstance(parent, AttentionStruct)
             if parent.parent.parallel and parent.idx == 0:
                 eval_module = parent.parent.module
                 eval_name = parent.parent.name
