@@ -2,6 +2,7 @@
 """Collect calibration dataset."""
 
 import os
+from PIL import Image
 from dataclasses import dataclass
 
 import datasets
@@ -69,14 +70,33 @@ def collect(config: DiffusionPtqRunConfig, dataset: datasets.Dataset):
             else:
                 pipeline_kwargs["control_image"] = controls
 
-        result_images = pipeline(prompts, generator=generators, **pipeline_kwargs).images
+        output = pipeline(prompts, generator=generators, **pipeline_kwargs)
+        if hasattr(output, "images"):
+            result_images = output.images
+        elif hasattr(output, "frames"):
+            videos = output.frames
+            result_images = []
+            # Take the first frame as thumbnail for saving; caches are collected independently via hooks
+            for vid in videos:
+                # vid can be (F,H,W,C) ndarray or list of frames
+                frame0 = vid[0]
+                if isinstance(frame0, Image.Image):
+                    result_images.append(frame0)
+                else:
+                    result_images.append(Image.fromarray(frame0))
+        else:
+            # Some pipelines may return tuple; skip saving samples but still proceed with caches
+            result_images = []
+            print(f"Warning: Some pipelines may return tuple; skipping saving samples but still proceeding with caches")
         num_guidances = (len(caches) // batch_size) // config.eval.num_steps
         num_steps = len(caches) // (batch_size * num_guidances)
         assert (
             len(caches) == batch_size * num_steps * num_guidances
         ), f"Unexpected number of caches: {len(caches)} != {batch_size} * {config.eval.num_steps} * {num_guidances}"
-        for j, (filename, image) in enumerate(zip(filenames, result_images, strict=True)):
-            image.save(os.path.join(samples_dirpath, f"{filename}.png"))
+        for j, filename in enumerate(filenames):
+            if j < len(result_images):
+                image = result_images[j]
+                image.save(os.path.join(samples_dirpath, f"{filename}.png"))
             for s in range(num_steps):
                 for g in range(num_guidances):
                     c = caches[s * batch_size * num_guidances + g * batch_size + j]
