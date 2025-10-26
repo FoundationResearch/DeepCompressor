@@ -3,8 +3,10 @@ pipeline:
   path: Wan-AI/Wan2.1-T2V-1.3B-Diffusers
   dtype: torch.bfloat16
 eval:
-  num_steps: 10
-  guidance_scale: 0
+  height: 480
+  width: 832
+  num_steps: 50
+  guidance_scale: 6.0
   protocol: fmeuler{num_steps}-g{guidance_scale}
 quant:
   calib:
