@@ -13,7 +13,7 @@ __all__ = ["compute_fid"]
 
 
 def get_dataset_features(
-    dataset: Dataset,
+    dataset: Dataset,   
     model,
     mode: str = "clean",
     batch_size: int = 128,

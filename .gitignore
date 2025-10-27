@@ -4,6 +4,7 @@ __pycache__/
 *$py.class
 datasets/
 runs_bkup/
+benchmarks/
 
 # C extensions
 *.so

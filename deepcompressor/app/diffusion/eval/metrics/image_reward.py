@@ -1,4 +1,5 @@
 import os
+import logging
 
 import datasets
 import torch
@@ -11,8 +12,15 @@ def compute_image_reward(
     ref_dataset: datasets.Dataset,
     gen_dirpath: str,
 ) -> dict[str, float]:
-    # import here to remove dependency on `ImageReward` git repo
-    import ImageReward as RM
+    # Import here to keep optional dependency. Gracefully skip if incompatible.
+    try:
+        import ImageReward as RM
+    except Exception as e:
+        logging.getLogger(__name__).warning(
+            "Skipping image_reward metric due to import error: %s. You can disable this metric or install a compatible ImageReward + transformers version.",
+            str(e),
+        )
+        return {}
 
     scores = []
     model = RM.load("ImageReward-v1.0")
