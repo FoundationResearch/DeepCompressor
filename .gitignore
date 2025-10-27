@@ -5,6 +5,7 @@ __pycache__/
 datasets/
 runs_bkup/
 benchmarks/
+baselines/
 
 # C extensions
 *.so

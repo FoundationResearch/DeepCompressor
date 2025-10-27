@@ -186,68 +186,129 @@ class DiffusionEvalConfig:
 
             output = pipeline(prompts, generator=generators, **pipeline_kwargs)
 
-            # Normalize different pipeline outputs (image vs video) to a list of PIL Images
-            if hasattr(output, "images"):
+            # Normalize outputs: always produce first-frame PNGs for metrics, and if available, save full video to samples_video
+            images = []  # first frames for metrics
+            videos: list[list[Image.Image]] | None = None  # full frame sequences for saving
+
+            if hasattr(output, "images") and output.images is not None:
                 images = output.images
+                videos = None
             else:
                 samples = None
-                if hasattr(output, "frames"):
+                if hasattr(output, "frames") and output.frames is not None:
                     samples = output.frames
-                elif hasattr(output, "videos"):
+                elif hasattr(output, "videos") and output.videos is not None:
                     samples = output.videos
                 elif isinstance(output, dict):
                     samples = (
-                        output.get("images")
-                        or output.get("frames")
+                        output.get("frames")
                         or output.get("videos")
+                        or output.get("images")
                     )
                 if samples is None:
                     raise AttributeError("Unsupported pipeline output: no images/frames/videos field found")
 
-                # Convert to list of PIL by taking the first frame per sample if it's a video
-                images = []
-                if isinstance(samples, list):
-                    # list of PIL or list of list-of-PIL
-                    for s in samples:
-                        if isinstance(s, Image.Image):
-                            images.append(s)
-                        elif isinstance(s, (list, tuple)) and len(s) > 0:
-                            # assume list of frames
-                            frame0 = s[0]
-                            if isinstance(frame0, Image.Image):
-                                images.append(frame0)
-                            else:
-                                arr0 = np.asarray(frame0)
-                                if np.issubdtype(arr0.dtype, np.floating):
-                                    arr0 = (np.clip(arr0, 0.0, 1.0) * 255.0).round().astype(np.uint8)
-                                images.append(Image.fromarray(arr0))
-                        else:
-                            arr0 = np.asarray(s)
-                            if np.issubdtype(arr0.dtype, np.floating):
-                                arr0 = (np.clip(arr0, 0.0, 1.0) * 255.0).round().astype(np.uint8)
-                            images.append(Image.fromarray(arr0))
-                else:
-                    # numpy or torch tensor
-                    arr = samples
+                def to_uint8_array(arr_like) -> np.ndarray:
+                    arr = arr_like
                     if torch.is_tensor(arr):
                         arr = arr.detach().cpu()
                         if arr.dtype.is_floating_point:
                             arr = (arr.clamp(0, 1) * 255).to(torch.uint8)
                         arr = arr.numpy()
-                    elif np.issubdtype(arr.dtype, np.floating):
+                    elif np.issubdtype(np.asarray(arr).dtype, np.floating):
                         arr = (np.clip(arr, 0.0, 1.0) * 255.0).round().astype(np.uint8)
-                    # expected shapes: (B, T, H, W, C) or (B, H, W, C)
-                    if arr.ndim == 5:
-                        arr = arr[:, 0]  # take first frame
-                    assert arr.ndim == 4 and arr.shape[-1] in (1, 3, 4)
-                    for i in range(arr.shape[0]):
-                        img = arr[i]
-                        if img.shape[-1] == 1:
-                            img = img[..., 0]
-                        images.append(Image.fromarray(img))
+                    else:
+                        arr = np.asarray(arr)
+                    return arr
 
+                videos = []
+                if isinstance(samples, list):
+                    # List per-sample; each element could be PIL, list-of-PIL, or arrays
+                    for s in samples:
+                        if isinstance(s, Image.Image):
+                            images.append(s)
+                            videos.append([s])
+                        elif isinstance(s, (list, tuple)) and len(s) > 0:
+                            frames: list[Image.Image] = []
+                            for fr in s:
+                                if isinstance(fr, Image.Image):
+                                    frames.append(fr)
+                                else:
+                                    arr = to_uint8_array(fr)
+                                    if arr.ndim == 3 and arr.shape[-1] == 1:
+                                        arr = arr[..., 0]
+                                    frames.append(Image.fromarray(arr))
+                            assert len(frames) > 0
+                            images.append(frames[0])
+                            videos.append(frames)
+                        else:
+                            arr = to_uint8_array(s)
+                            if arr.ndim == 3 and arr.shape[-1] in (1, 3, 4):
+                                img0 = arr if arr.shape[-1] != 1 else arr[..., 0]
+                                images.append(Image.fromarray(img0))
+                                videos.append([Image.fromarray(img0)])
+                            elif arr.ndim == 4:  # (T, H, W, C)
+                                frames = []
+                                for t in range(arr.shape[0]):
+                                    fr = arr[t]
+                                    if fr.shape[-1] == 1:
+                                        fr = fr[..., 0]
+                                    frames.append(Image.fromarray(fr))
+                                images.append(frames[0])
+                                videos.append(frames)
+                            else:
+                                raise ValueError("Unsupported sample array shape")
+                else:
+                    # Tensor/ndarray batched: (B, T, H, W, C) or (B, H, W, C)
+                    arr = to_uint8_array(samples)
+                    if arr.ndim == 5:
+                        # Build per-sample frames
+                        for i in range(arr.shape[0]):
+                            frames = []
+                            for t in range(arr.shape[1]):
+                                fr = arr[i, t]
+                                if fr.shape[-1] == 1:
+                                    fr = fr[..., 0]
+                                frames.append(Image.fromarray(fr))
+                            images.append(frames[0])
+                            videos.append(frames)
+                    elif arr.ndim == 4:
+                        for i in range(arr.shape[0]):
+                            fr = arr[i]
+                            if fr.shape[-1] == 1:
+                                fr = fr[..., 0]
+                            img = Image.fromarray(fr)
+                            images.append(img)
+                            videos.append([img])
+                    else:
+                        raise ValueError("Unsupported video array shape")
+
+            # Save first-frame images (for metrics)
             for filename, image in zip(filenames, images, strict=True):
                 image.save(os.path.join(dirpath, f"{filename}.png"))
+
+            # Save full videos as GIF in a mirrored directory tree under samples_video
+            if videos is not None:
+                video_dirpath = dirpath.replace(os.path.sep + "samples" + os.path.sep, os.path.sep + "samples_video" + os.path.sep)
+                if video_dirpath == dirpath:
+                    video_dirpath = os.path.join(os.path.dirname(os.path.dirname(dirpath)), "samples_video", os.path.basename(os.path.dirname(dirpath)), os.path.basename(dirpath))
+                os.makedirs(video_dirpath, exist_ok=True)
+                for filename, frames in zip(filenames, videos, strict=True):
+                    if not frames:
+                        continue
+                    save_path = os.path.join(video_dirpath, f"{filename}.gif")
+                    try:
+                        frames[0].save(
+                            save_path,
+                            save_all=True,
+                            append_images=frames[1:],
+                            duration=int(1000 / 8),  # ~8 FPS
+                            loop=0,
+                            optimize=False,
+                        )
+                    except Exception:
+                        # best-effort: save only first frame if GIF write fails
+                        frames[0].save(os.path.join(video_dirpath, f"{filename}.png"))
 
     def generate(
         self,
