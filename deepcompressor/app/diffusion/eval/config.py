@@ -214,9 +214,18 @@ class DiffusionEvalConfig:
                         elif isinstance(s, (list, tuple)) and len(s) > 0:
                             # assume list of frames
                             frame0 = s[0]
-                            images.append(frame0 if isinstance(frame0, Image.Image) else Image.fromarray(np.asarray(frame0)))
+                            if isinstance(frame0, Image.Image):
+                                images.append(frame0)
+                            else:
+                                arr0 = np.asarray(frame0)
+                                if np.issubdtype(arr0.dtype, np.floating):
+                                    arr0 = (np.clip(arr0, 0.0, 1.0) * 255.0).round().astype(np.uint8)
+                                images.append(Image.fromarray(arr0))
                         else:
-                            images.append(Image.fromarray(np.asarray(s)))
+                            arr0 = np.asarray(s)
+                            if np.issubdtype(arr0.dtype, np.floating):
+                                arr0 = (np.clip(arr0, 0.0, 1.0) * 255.0).round().astype(np.uint8)
+                            images.append(Image.fromarray(arr0))
                 else:
                     # numpy or torch tensor
                     arr = samples
@@ -225,6 +234,8 @@ class DiffusionEvalConfig:
                         if arr.dtype.is_floating_point:
                             arr = (arr.clamp(0, 1) * 255).to(torch.uint8)
                         arr = arr.numpy()
+                    elif np.issubdtype(arr.dtype, np.floating):
+                        arr = (np.clip(arr, 0.0, 1.0) * 255.0).round().astype(np.uint8)
                     # expected shapes: (B, T, H, W, C) or (B, H, W, C)
                     if arr.ndim == 5:
                         arr = arr[:, 0]  # take first frame
