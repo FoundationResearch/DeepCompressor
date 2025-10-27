@@ -306,9 +306,14 @@ class DiffusionEvalConfig:
                             loop=0,
                             optimize=False,
                         )
-                    except Exception:
+                        logger.info(f"Saved video {filename} as GIF: {save_path}")
+                    except Exception as e:
                         # best-effort: save only first frame if GIF write fails
+                        logger.warning(f"Failed to save video {filename} as GIF: {e}")
                         frames[0].save(os.path.join(video_dirpath, f"{filename}.png"))
+                        logger.warning(f"Saved first frame as PNG instead: {os.path.join(video_dirpath, f"{filename}.png")}")
+            else:
+                logger.warning("No videos to save")
 
     def generate(
         self,
