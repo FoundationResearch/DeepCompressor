@@ -11,7 +11,7 @@ eval:
   num_samples: 2
 quant:
   calib:
-    batch_size: 16
+    batch_size: 1
   wgts:
     calib_range:
       element_batch_size: 64
