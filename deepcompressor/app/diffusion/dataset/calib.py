@@ -59,6 +59,9 @@ class DiffusionCalibCacheLoaderConfig(BaseDataLoaderConfig):
 
     path: str
     num_workers: int = 8
+    pin_memory: bool = False
+    prefetch_factor: int = 1
+    persistent_workers: bool = False
 
     def build_dataset(self) -> "DiffusionCalibDataset":
         """Build the calibration dataset."""
@@ -70,19 +73,11 @@ class DiffusionCalibCacheLoaderConfig(BaseDataLoaderConfig):
 
 
 class DiffusionCalibDataset(DiffusionDataset):
-    data: list[dict[str, tp.Any]]
-
     def __init__(self, path: str, num_samples: int = -1, seed: int = 0) -> None:
         super().__init__(path, num_samples=num_samples, seed=seed, ext=".pt")
-        data = [torch.load(path) for path in self.filepaths]
-        random.Random(seed).shuffle(data)
-        self.data = data
-
-    def __len__(self) -> int:
-        return len(self.data)
 
     def __getitem__(self, idx) -> dict[str, tp.Any]:
-        return self.data[idx]
+        return torch.load(self.filepaths[idx])
 
 
 class DiffusionConcatCacheAction(ConcatCacheAction):
@@ -231,9 +226,17 @@ class DiffusionCalibCacheLoader(BaseCalibCacheLoader):
         return super()._init_cache(name, module)
 
     def iter_samples(self) -> tp.Generator[ModuleForwardInput, None, None]:
-        dataloader = self.dataset.build_loader(
-            batch_size=self.batch_size, shuffle=False, drop_last=True, num_workers=self.config.num_workers
-        )
+        loader_kwargs = {
+            "batch_size": self.batch_size,
+            "shuffle": False,
+            "drop_last": True,
+            "num_workers": self.config.num_workers,
+            "pin_memory": self.config.pin_memory,
+        }
+        if self.config.num_workers > 0:
+            loader_kwargs["persistent_workers"] = self.config.persistent_workers
+            loader_kwargs["prefetch_factor"] = self.config.prefetch_factor
+        dataloader = self.dataset.build_loader(**loader_kwargs)
         for data in dataloader:
             yield ModuleForwardInput(args=data["input_args"], kwargs=data["input_kwargs"])
 
