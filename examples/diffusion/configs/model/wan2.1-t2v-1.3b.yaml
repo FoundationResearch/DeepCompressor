@@ -17,12 +17,12 @@ quant:
     prefetch_factor: 1
   wgts:
     calib_range:
-      element_batch_size: 32
-      sample_batch_size: 16
+      element_batch_size: 8
+      sample_batch_size: 4
       element_size: 512
       sample_size: -1
     low_rank:
-      sample_batch_size: 16
+      sample_batch_size: 4
       sample_size: -1
     skips:
     - embed
@@ -32,8 +32,8 @@ quant:
     - transformer_add_norm
   ipts:
     calib_range:
-      element_batch_size: 32
-      sample_batch_size: 16
+      element_batch_size: 8
+      sample_batch_size: 4
       element_size: 512
       sample_size: -1
     skips:
@@ -44,6 +44,6 @@ quant:
     - transformer_add_norm
   smooth:
     proj:
-      sample_batch_size: 16
+      sample_batch_size: 4
       sample_size: -1
 
