@@ -12,6 +12,9 @@ eval:
 quant:
   calib:
     batch_size: 1
+    num_workers: 0
+    pin_memory: false
+    prefetch_factor: 1
   wgts:
     calib_range:
       element_batch_size: 4
