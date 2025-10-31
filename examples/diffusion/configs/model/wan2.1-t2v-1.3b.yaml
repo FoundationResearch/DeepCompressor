@@ -24,6 +24,7 @@ quant:
     low_rank:
       sample_batch_size: 4
       sample_size: -1
+      rank: 128
     skips:
     - embed
     - transformer_proj_in
