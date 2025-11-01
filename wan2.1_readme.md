@@ -8,8 +8,8 @@ This document shows how to quantize WAN 2.1 (text-to-video, 1.3B) to SVDQuant IN
 
 ```bash
 python -m deepcompressor.app.diffusion.dataset.collect.calib \
-  /workspace/pkgs/deepcompressor/examples/diffusion/configs/model/wan2.1-t2v-1.3b.yaml \
-  /workspace/pkgs/deepcompressor/examples/diffusion/configs/collect/qdiff.yaml
+  deepcompressor/examples/diffusion/configs/model/wan2.1-t2v-1.3b.yaml \
+  deepcompressor/examples/diffusion/configs/collect/qdiff.yaml
 ```
 
 - You can change how many samples to collect by editing `examples/diffusion/configs/collect/qdiff.yaml` (key: `collect.num_samples`).
@@ -19,9 +19,9 @@ python -m deepcompressor.app.diffusion.dataset.collect.calib \
 ```bash
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 python -m deepcompressor.app.diffusion.ptq \
-  /workspace/pkgs/deepcompressor/examples/diffusion/configs/model/wan2.1-t2v-1.3b.yaml \
-  /workspace/pkgs/deepcompressor/examples/diffusion/configs/svdquant/int4.yaml \
-  /workspace/pkgs/deepcompressor/examples/diffusion/configs/collect/overwrite_s32.yaml \
+  deepcompressor/examples/diffusion/configs/model/wan2.1-t2v-1.3b.yaml \
+  deepcompressor/examples/diffusion/configs/svdquant/int4.yaml \
+  deepcompressor/examples/diffusion/configs/collect/overwrite_s32.yaml \
   --save-model true
 ```
 
