@@ -4,7 +4,15 @@ This document shows how to quantize WAN 2.1 (text-to-video, 1.3B) to SVDQuant IN
 
 ### Quickstart
 
-1) Generate the calibration set
+1) Generate a reference set (no quantization)
+
+```bash
+python -m deepcompressor.app.diffusion.ptq \
+  deepcompressor/examples/diffusion/configs/model/wan2.1-t2v-1.3b.yaml \
+  --output-dirname reference
+```
+
+2) Generate the calibration set
 
 ```bash
 python -m deepcompressor.app.diffusion.dataset.collect.calib \
@@ -14,7 +22,7 @@ python -m deepcompressor.app.diffusion.dataset.collect.calib \
 
 - You can change how many samples to collect by editing `examples/diffusion/configs/collect/qdiff.yaml` (key: `collect.num_samples`).
 
-2) Run SVDQuant PTQ and inference
+3) Run SVDQuant PTQ and inference
 
 ```bash
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
@@ -59,5 +67,4 @@ WAN 2.1 is a video diffusion pipeline. The following changes ensure calibration,
 
 - Use `--save-model true` to save a quantized checkpoint; this can be converted and deployed via Nunchaku later if desired.
 - Keep the WAN weights accessible in your environment as referenced by the model config (`Wan-AI/Wan2.1-T2V-1.3B-Diffusers`).
-
 
