@@ -4,7 +4,7 @@ This document shows how to quantize WAN 2.1 (text-to-video, 1.3B) to SVDQuant IN
 
 ### Quickstart
 
-1) Generate a reference set (no quantization)
+1) Generate a reference result (no quantization, bf16 baseline)
 
 ```bash
 python -m deepcompressor.app.diffusion.ptq \
